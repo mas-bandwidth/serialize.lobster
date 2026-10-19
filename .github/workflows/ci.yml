@@ -1,0 +1,48 @@
+name: ci
+
+on:
+  push:
+    branches: [main, sprint/serialize-lobster]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: test on the pinned Lobster
+    runs-on: [self-hosted, Linux, X64, fleet, serialize]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check CI workflow invariants
+        run: make check-ci
+
+      - name: Fetch the pinned Lobster toolchain
+        run: make dist-lobster
+
+      - name: Test
+        run: make test
+
+      - name: Fuzz
+        run: if [ -f make/fuzz.mk ]; then make fuzz; fi
+
+      - name: Bench check
+        run: if [ -f make/bench.mk ]; then make bench-check; fi
+
+  corpus:
+    name: STANDARD.md and conformance/ match the corpus pin
+    runs-on: [self-hosted, Linux, X64, fleet, serialize]
+    env:
+      SERIALIZE_TAG: v1.17.0
+    steps:
+      - uses: actions/checkout@v4
+
+      # STANDARD.md and conformance/ are VERBATIM vendored copies (DESIGN.md,
+      # "The vendored standard"). They must be the pinned release's own bytes;
+      # a divergence is red, never a skip.
+      - name: Check out the reference at the corpus pin
+        run: git clone --quiet --depth 1 --branch "$SERIALIZE_TAG" https://github.com/mas-bandwidth/serialize.git "$RUNNER_TEMP/serialize"
+
+      - name: The vendored corpus and standard are the pin's
+        run: |
+          diff -ru "$RUNNER_TEMP/serialize/conformance" conformance
+          diff -ru "$RUNNER_TEMP/serialize/STANDARD.md" STANDARD.md
