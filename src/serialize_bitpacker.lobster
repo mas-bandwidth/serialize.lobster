@@ -46,7 +46,14 @@ def flush_bits(s:serialize_write_stream):
 def pack_bytes(s:serialize_write_stream, data:string, offset:int, count:int):
     if (s.bits_written & 7) != 0:
         serialize_abort("serialize: byte array serialization requires byte alignment")
+    // The gate is consulted once with the whole width before any byte moves, so
+    // a full buffer latches and a zero-count call still tests the latch
+    // (DESIGN.md (e); STANDARD.md, Reader Obligations, "Failure is terminal").
     if count <= 0:
+        if not s.write_gate(0):
+            return
+        return
+    if not s.write_gate(count * 8):
         return
     if s.scratch_bits != 0:
         write_int64_le(s.buffer, s.word_index * 8, s.scratch)
@@ -91,7 +98,15 @@ def unpack_bits64(s:serialize_read_stream, bits:int) -> int:
 def unpack_bytes(s:serialize_read_stream, data:string, offset:int, count:int):
     if (s.bits_read & 7) != 0:
         serialize_abort("serialize: byte array serialization requires byte alignment")
+    // Refuse a read past the end before any load, with the whole width, so no
+    // byte is read outside the data and a zero-count call still tests the latch
+    // (DESIGN.md (e); STANDARD.md, Reader Obligations, "Reading past the end
+    // must fail", "No read touches memory past the data's end").
     if count <= 0:
+        if not s.read_gate(0):
+            return
+        return
+    if not s.read_gate(count * 8):
         return
     let src = s.bits_read >> 3
     var i = 0

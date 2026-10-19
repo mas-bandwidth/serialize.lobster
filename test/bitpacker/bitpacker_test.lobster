@@ -289,6 +289,67 @@ def test_pack_and_unpack_bytes():
             trail, ok = r.serialize_bits(trail, 19)
             assert ok and trail == 0x12345
 
+// The byte primitives pass the same gates as every other operation: a full
+// buffer latches at the whole width before a byte moves, a read past the end
+// is refused before any load, and a zero-count call still consults the latch
+// (DESIGN.md (e); STANDARD.md, Reader Obligations, "Failure is terminal").
+def test_bytes_gates():
+    let payload = ensure_size("", 16, 0)
+    for(16) i:
+        write_int8_le(payload, i, (i * 13 + 1) & 0xFF)
+
+    let full = ensure_size("", 8, 0)
+    let wf = serialize_write_stream(full)
+    wf.pack_bytes(payload, 0, 8)
+    assert not wf.error()
+    assert wf.bits_processed() == 64
+    assert wf.bits_available() == 0
+    wf.pack_bytes(payload, 8, 1)
+    assert wf.error()
+    assert wf.bits_processed() == 64
+    for(8) i:
+        assert read_uint8_le(full, i) == ((i * 13 + 1) & 0xFF)
+    wf.pack_bytes(payload, 0, 0)
+    assert wf.error()
+
+    // Data of 0..9 bytes never reads outside itself: a count one byte past the
+    // end is refused with the destination untouched.
+    for(10) nbytes:
+        let src = ensure_size("", 24, 0)
+        for(nbytes) i:
+            write_int8_le(src, i, (i + 1) * 0x11)
+        let rs = serialize_read_stream(src, nbytes)
+        let dst = ensure_size("", 16, 0xEE)
+        rs.unpack_bytes(dst, 0, nbytes + 1)
+        assert rs.error()
+        assert rs.bits_processed() == 0
+        for(16) i:
+            assert read_uint8_le(dst, i) == 0xEE
+
+    // A count wider than the backing string is refused by the gate, not by a
+    // VM index error on a load past the data's end.
+    let data = ensure_size("", 24, 0)
+    for(16) i:
+        write_int8_le(data, i, (i + 1) * 0x11)
+    let r2 = serialize_read_stream(data, 16)
+    let dst2 = ensure_size("", 32, 0xEE)
+    r2.unpack_bytes(dst2, 0, 20)
+    assert r2.error()
+    assert r2.bits_processed() == 0
+    for(32) i:
+        assert read_uint8_le(dst2, i) == 0xEE
+    r2.unpack_bytes(dst2, 0, 0)
+    assert r2.error()
+
+    // A fitting byte read still works and advances bits_read.
+    let r3 = serialize_read_stream(data, 16)
+    let dst3 = ensure_size("", 16, 0)
+    r3.unpack_bytes(dst3, 3, 12)
+    assert not r3.error()
+    assert r3.bits_processed() == 96
+    for(12) i:
+        assert read_uint8_le(dst3, i + 3) == ((i + 1) * 0x11)
+
 def test_bits_required():
     assert serialize_bits_required(0, 0) == 0
     assert serialize_bits_required(5, 5) == 0
@@ -561,6 +622,7 @@ def TestBitpacker():
     test_oracle_and_round_trip()
     test_fixed_width_and_align()
     test_pack_and_unpack_bytes()
+    test_bytes_gates()
     test_bits_required()
     test_read_latch_over_valid_data()
     test_write_refusals_and_latch()
