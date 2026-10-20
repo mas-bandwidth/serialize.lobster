@@ -65,6 +65,15 @@ typedef struct {
     unsigned char mutant[BUFCAP + 8];
     int nmutant;
     int has_mutant;
+    /* One entry per ranged field the writer emitted: where its offset bits
+       live and an offset one past its span, which serialize.c's reader
+       refuses (STANDARD.md, int; DESIGN.md (c)).  The targeted mutant writes
+       that offset so the mutant leg reaches the range refusal itself. */
+    int nranged;
+    int rkind[MAXOPS];
+    int rstart[MAXOPS];
+    int rwidth[MAXOPS];
+    uint64_t rtarget[MAXOPS];
 } Program;
 
 /* ---------------------------------------------------------------- RNG --- */
@@ -255,11 +264,34 @@ static void gen_program(Program *p, int id) {
 
 /* ------------------------------------------------------------- writer --- */
 
+static int bit_length64(uint64_t v) {
+    int b = 0;
+    while (v) { b++; v >>= 1; }
+    return b;
+}
+
+/* Record a ranged field: its offset starts at bit bstart and spans width
+   bits.  Only fields with a representable out-of-range offset are recorded
+   (a full-width or degenerate span has none). */
+static void record_ranged(Program *p, int kind, uint64_t span, int64_t bstart) {
+    int bits = bit_length64(span);
+    if (bits == 0 || bits >= 64) return;
+    if (span + 1 >= (1ULL << bits)) return;
+    if (p->nranged >= MAXOPS) return;
+    p->rkind[p->nranged] = kind;
+    p->rstart[p->nranged] = (int)bstart;
+    p->rwidth[p->nranged] = bits;
+    p->rtarget[p->nranged] = span + 1;
+    p->nranged++;
+}
+
 static int write_program(Program *p, unsigned char *buf, int cap, int widen, int *widen_done) {
     serialize_write_stream_t w;
     serialize_write_stream_init(&w, buf, cap);
+    p->nranged = 0;
     for (int i = 0; i < p->nops; i++) {
         Op *o = &p->ops[i];
+        int64_t bstart = serialize_write_bits_processed(&w);
         switch (o->kind) {
         case OP_BITS: serialize_write_bits(&w, (uint32_t)o->u, o->bits); break;
         case OP_BITS64: serialize_write_bits64(&w, (uint64_t)o->u, o->bits); break;
@@ -315,6 +347,18 @@ static int write_program(Program *p, unsigned char *buf, int cap, int widen, int
             serialize_write_bool(&w, 1);
             serialize_write_int(&w, 3, 0, 7);
             serialize_write_uint16(&w, 42);
+            break;
+        }
+        switch (o->kind) {
+        case OP_INT:
+            record_ranged(p, o->kind, (uint32_t)o->max - (uint32_t)o->min, bstart);
+            break;
+        case OP_INT64:
+        case OP_FIXED32:
+        case OP_FIXED64:
+        case OP_FIXED128:
+        case OP_I128:
+            record_ranged(p, o->kind, (uint64_t)o->max - (uint64_t)o->min, bstart);
             break;
         }
     }
@@ -449,7 +493,38 @@ static int read_program(const unsigned char *bytes, int nbytes, Program *p, Read
 
 /* ---------------------------------------------------------- mutations --- */
 
-static void make_mutant(Program *p) {
+/* Targets are chosen independently of the base generator's stream, so adding
+   them does not perturb the programs and mutants it already covers. */
+static int targeted_kind[OP_KINDS];
+
+static void set_bits_le(unsigned char *buf, int bit, int width, uint64_t value) {
+    for (int k = 0; k < width; k++) {
+        int b = bit + k;
+        unsigned char mask = (unsigned char)(1u << (b & 7));
+        if ((value >> k) & 1) buf[b >> 3] |= mask;
+        else buf[b >> 3] &= (unsigned char)~mask;
+    }
+}
+
+/* Rewrite one ranged field's offset one past its span: serialize.c's reader
+   refuses there, so the mutant exercises the reader's range check rather than
+   only truncation and string framing (STANDARD.md, int; DESIGN.md (c)).
+   Kinds are visited least-used first so every ranged kind is reached. */
+static int make_targeted_mutant(Program *p) {
+    int best = -1;
+    for (int k = 0; k < p->nranged; k++) {
+        if (best < 0 || targeted_kind[p->rkind[k]] < targeted_kind[p->rkind[best]])
+            best = k;
+    }
+    if (best < 0) return 0;
+    memcpy(p->mutant, p->bytes, (size_t)p->nbytes);
+    p->nmutant = p->nbytes;
+    set_bits_le(p->mutant, p->rstart[best], p->rwidth[best], p->rtarget[best]);
+    targeted_kind[p->rkind[best]]++;
+    return 1;
+}
+
+static int make_mutant(Program *p) {
     p->nmutant = p->nbytes;
     memcpy(p->mutant, p->bytes, (size_t)p->nbytes);
     int kind = (int)rnd(3);
@@ -465,6 +540,7 @@ static void make_mutant(Program *p) {
         int extra = 1 + (int)rnd(4);
         for (int k = 0; k < extra; k++) p->mutant[p->nmutant++] = (unsigned char)rng_next();
     }
+    return make_targeted_mutant(p);
 }
 
 /* ----------------------------------------------------------- encoding --- */
@@ -700,7 +776,8 @@ static int compare_read(const char *what, Program *p, ReadResult *exp, ReadResul
 }
 
 static int run_batch(const char *lobster, const char *driver, const char *tmpdir,
-                     Program *progs, int nprog, int widen, int *widen_done) {
+                     Program *progs, int nprog, int widen, int *widen_done,
+                     int *targeted) {
     char batch[4096], out[4096], hex[BUFCAP * 2 + 8];
     snprintf(batch, sizeof(batch), "%s/batch.txt", tmpdir);
     snprintf(out, sizeof(out), "%s/result.txt", tmpdir);
@@ -716,7 +793,7 @@ static int run_batch(const char *lobster, const char *driver, const char *tmpdir
             fclose(f);
             return -1;
         }
-        if (p->has_mutant) { make_mutant(p); total_mutants++; }
+        if (p->has_mutant) { if (make_mutant(p)) (*targeted)++; total_mutants++; }
         hex_encode(hex, p->bytes, p->nbytes);
         char mh[BUFCAP * 2 + 8];
         hex_encode(mh, p->mutant, p->nmutant);
@@ -797,7 +874,7 @@ int main(int argc, char **argv) {
     fflush(stdout);
 
     int widen_done = 0;
-    int mutant_count = 0, fail = 0;
+    int mutant_count = 0, targeted_count = 0, fail = 0;
     Program progs[BATCH];
     for (int start = 0; start < PROGRAMS; start += BATCH) {
         int n = PROGRAMS - start;
@@ -806,7 +883,7 @@ int main(int argc, char **argv) {
             gen_program(&progs[i], start + i);
             /* keep the C oracle's expected bytes in the program */
         }
-        int m = run_batch(lobster, driver, tmpl, progs, n, negative, &widen_done);
+        int m = run_batch(lobster, driver, tmpl, progs, n, negative, &widen_done, &targeted_count);
         if (m < 0) { fail = 1; break; }
         mutant_count += m;
     }
@@ -815,6 +892,6 @@ int main(int argc, char **argv) {
         printf("--- FAIL TestDifferentialAgainstSerializeC\n");
         return 1;
     }
-    printf("--- PASS TestDifferentialAgainstSerializeC: %d programs, %d mutants\n", PROGRAMS, mutant_count);
+    printf("--- PASS TestDifferentialAgainstSerializeC: %d programs, %d mutants (%d targeted at ranged offsets)\n", PROGRAMS, mutant_count, targeted_count);
     return 0;
 }
