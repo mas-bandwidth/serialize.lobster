@@ -41,6 +41,9 @@ fuzz: toolchain-lobster $(FUZZ_HOST) $(FUZZ_DRIVER)
 	@if $(FUZZ_HOST) --lobster $(LOBSTER) --driver $(FUZZ_DRIVER) --tmp $(FUZZ_WORK) \
 		--negative-control >$(FUZZ_BUILD)/negative.log 2>&1; then \
 		echo "negative control DID NOT go red"; exit 1; \
+	elif ! grep -q 'write bytes differ' $(FUZZ_BUILD)/negative.log || \
+		! grep -q -- '--- FAIL TestDifferentialAgainstSerializeC' $(FUZZ_BUILD)/negative.log; then \
+		echo "negative control went red for the wrong reason (see build/fuzz/negative.log)"; exit 1; \
 	else \
-		echo "negative control: RED as expected (see build/fuzz/negative.log)"; \
+		echo "negative control: RED as expected (write bytes differ; see build/fuzz/negative.log)"; \
 	fi
