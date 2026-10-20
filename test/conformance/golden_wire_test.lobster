@@ -76,7 +76,10 @@ def TestGoldenWireFormat():
     // Every single-bit flip of a consumed bit: refused or decoded differently.
     var flips = 0
     for(891) bit:
-        var flipped = data
+        // A fresh copy per flip: a Lobster string is mutable and aliased, so
+        // `var flipped = data` would let each flip accumulate on the golden
+        // bytes and later flips would no longer be single-bit flips.
+        let flipped = conf_string_from_bytes(golden_bytes)
         let byte_index = bit >> 3
         let b = read_uint8_le(flipped, byte_index) ^ (1 << (bit & 7))
         write_int8_le(flipped, byte_index, b)
