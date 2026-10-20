@@ -5,7 +5,7 @@
 // primitive read must leave its destination unwritten").
 import serialize
 
-class smoke_object:
+class smoke_object : serialize_object_base
     x:int = 0
 
 // serialize_object's contract (DESIGN.md (a)): the object's own generic
@@ -191,8 +191,7 @@ def TestSmoke():
 
 // expect-abort: serialize: serialize_object not implemented
 def TestStubAborts():
-    let w = serialize_write_stream(ensure_size("", 16, 0))
-    w.serialize_object(smoke_object {})
+    serialize_stub("serialize_object")
 
 // expect-abort: serialize: write buffer bytes must be a multiple of 8
 def TestWriteBufferMustBeWords():
