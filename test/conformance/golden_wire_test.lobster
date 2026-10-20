@@ -31,7 +31,7 @@ def golden_read(data:string, steps:[string]) -> [cval], bool, int:
         if not ok:
             vals.push(conf_text_val(""))
             continue
-        var v, step_ok = conf_step_read(r, step)
+        var v, step_ok = conf_step_read(r, step, "")
         ok = step_ok
         vals.push(v)
     return vals, ok, r.bits_processed()

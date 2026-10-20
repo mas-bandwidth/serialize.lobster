@@ -359,7 +359,53 @@ def conf_float_val(f:float, bits:int, width:int) -> cval:
     v.text = "0x" + conf_hex(bits, width)
     return v
 
-def conf_step_read(r:serialize_read_stream, step:string) -> cval, bool:
+// ---------------------------------------------------------------------------
+// the sabotaged reader (STANDARD.md, Provenance, "A gate nobody has seen go
+// red"; DESIGN.md (g) "Conformance"). The switch lives in the test: these read
+// paths mirror serialize_align, serialize_bytes and serialize_string but skip
+// only the nonzero-padding refusal. src/ is never edited. Every other refusal
+// (past the end, a bad length, interior NUL, malformed UTF-8) still happens.
+// ---------------------------------------------------------------------------
+
+def conf_sab_align(r:serialize_read_stream) -> bool:
+    let n = r.align_bits()
+    if not r.read_gate(n):
+        return false
+    var padding = 0
+    if n > 0:
+        padding = r.unpack_bits(n)
+    return true
+
+def conf_sab_bytes(r:serialize_read_stream, data:string, count:int) -> string, bool:
+    if r.failed:
+        return data, false
+    let align = r.align_bits()
+    if not r.read_gate(align + count * 8):
+        return data, false
+    var padding = 0
+    if align > 0:
+        padding = r.unpack_bits(align)
+    if count > 0:
+        r.unpack_bytes(data, 0, count)
+    return data, true
+
+def conf_sab_string(r:serialize_read_stream, value:string, buffer_size:int) -> string, bool:
+    if r.failed:
+        return value, false
+    var n = 0
+    var ok = true
+    n, ok = r.serialize_int(n, 0, buffer_size - 1)
+    if not ok:
+        return value, false
+    var payload = ensure_size("", n, 0)
+    payload, ok = conf_sab_bytes(r, payload, n)
+    if not ok:
+        return value, false
+    if string_has_nul(payload, n) or not string_utf8_valid(payload, n):
+        return value, r.fail()
+    return payload, true
+
+def conf_step_read(r:serialize_read_stream, step:string, sabotage:string) -> cval, bool:
     let toks = tokenize(step, " ", "")
     if length(toks) == 0:
         return conf_text_val(""), false
@@ -369,7 +415,11 @@ def conf_step_read(r:serialize_read_stream, step:string) -> cval, bool:
             return conf_text_val("-"), false
         return conf_text_val("-"), true
     if op == "align":
-        let ok = r.serialize_align()
+        var ok = true
+        if sabotage == "align-padding":
+            ok = conf_sab_align(r)
+        else:
+            ok = r.serialize_align()
         return conf_text_val("-"), ok
     if op == "bool":
         var b = true
@@ -440,7 +490,10 @@ def conf_step_read(r:serialize_read_stream, step:string) -> cval, bool:
         let sentinel = conf_string_from_bytes(conf_bytes("53 45 4E 54 49 4E 45 4C"))
         var data = sentinel
         var ok = true
-        data, ok = r.serialize_bytes(data, count)
+        if sabotage == "align-padding":
+            data, ok = conf_sab_bytes(r, data, count)
+        else:
+            data, ok = r.serialize_bytes(data, count)
         if ok and count < length(data):
             return conf_text_val(conf_hex_bytes(substring(data, 0, count))), ok
         return conf_text_val(conf_hex_bytes(data)), ok
@@ -448,7 +501,10 @@ def conf_step_read(r:serialize_read_stream, step:string) -> cval, bool:
         let buffer_size = conf_parse_int(toks[1])
         var value = "SENTINEL"
         var ok = true
-        value, ok = r.serialize_string(value, buffer_size)
+        if sabotage == "align-padding":
+            value, ok = conf_sab_string(r, value, buffer_size)
+        else:
+            value, ok = r.serialize_string(value, buffer_size)
         return conf_text_val(conf_hex_bytes(value)), ok
     if op == "wstring":
         let buffer_size = conf_parse_int(toks[1])
@@ -696,16 +752,6 @@ def conf_sentinel(step:string) -> cval:
         return conf_i128_val(serialize_int128_make(0x0BADF00D, 0x12345678))
     return conf_int_val(0)
 
-def conf_sabotage_applies(rec:conf_rec, sabotage:string) -> bool:
-    if sabotage != "align-padding":
-        return false
-    let n = rec.name
-    if rec.op == "align":
-        return find_string(n, "non-zero-pad") >= 0 or find_string(n, "pad-bit") >= 0
-    if rec.op == "bytes" or rec.op == "string":
-        return find_string(n, "non-zero-align-padding") >= 0
-    return false
-
 def conf_run_record(rec:conf_rec, sabotage:string, what:string) -> bool:
     let steps = conf_steps(rec)
     if length(steps) == 0:
@@ -716,7 +762,7 @@ def conf_run_record(rec:conf_rec, sabotage:string, what:string) -> bool:
     var failed_at = -1
     for(steps) step, i:
         let before = r.bits_processed()
-        var v, ok = conf_step_read(r, step)
+        var v, ok = conf_step_read(r, step, sabotage)
         if v.kind == -1:
             return conf_check(false, what + ": unknown step " + step)
         if failed_at >= 0:
@@ -733,8 +779,6 @@ def conf_run_record(rec:conf_rec, sabotage:string, what:string) -> bool:
             return conf_check(false, what + ": expected refusal, read accepted")
         if not r.error():
             return conf_check(false, what + ": refusal did not latch")
-        if conf_sabotage_applies(rec, sabotage):
-            return conf_check(false, what + ": sabotage control expected this rule\'s reader to accept")
         if not conf_val_equal(vals[failed_at], conf_sentinel(steps[failed_at])):
             return conf_check(false, what + ": refusal touched the destination")
         if failed_at == length(steps) - 1:
@@ -815,6 +859,12 @@ def conf_run_file(path:string, sabotage:string) -> int, [string], int:
             failed.push(rec.name)
     return bad, failed, length(records)
 
+def conf_name_in(names:[string], name:string) -> bool:
+    for(names) n:
+        if n == name:
+            return true
+    return false
+
 def TestConformanceCorpus():
     let names, sizes, times = scan_folder("conformance", true)
     var files:[string] = []
@@ -846,26 +896,53 @@ def TestConformanceCorpus():
     if not conf_check(ub == 1 and ucount == 1, "control: unknown operation was not rejected"):
         return
 
-    // Control 2 (STANDARD.md, Provenance; STANDARD.md, align): one refusal
-    // rule switched off through the runner's test-only switch, never a source
-    // edit. It must go red on exactly the vectors that pin align padding.
-    var expected = 0
-    for(files) path:
-        if find_string(path, "align") >= 0 or find_string(path, "bytes") >= 0 or find_string(path, "string") >= 0:
+    // Control 2 (STANDARD.md, Provenance; STANDARD.md, align): the sabotaged
+    // reader above is run over the whole corpus with the nonzero-padding
+    // refusal switched off. It must go red on EXACTLY the refused vectors that
+    // pin align padding, including an align reached through a nested object
+    // (object.txt, object-refusal-propagates-out-of-the-nesting) and through a
+    // sequence. The oracle is this explicit list, read from the corpus by
+    // hand; it is not derived from the same predicate that drives the switch,
+    // so a checker that stops noticing the rule makes this control go red.
+    let padding_vectors:[string] = [
+        "align-refuse-one-non-zero-pad-bit",
+        "align-refuse-four-non-zero-pad-bits",
+        "align-refuse-seven-non-zero-pad-bits",
+        "align-refuse-only-the-highest-pad-bit-set",
+        "align-refuse-only-the-lowest-pad-bit-set",
+        "bytes-zero-count-refuse-non-zero-align-padding",
+        "bytes-refuse-non-zero-align-padding",
+        "string-refuse-non-zero-align-padding",
+        "sequence-refusal-is-terminal-after-bad-alignment",
+        "object-refusal-propagates-out-of-the-nesting"
+    ]
+    for(padding_vectors) name:
+        var found = false
+        var was_refused = false
+        for(files) path:
             let maybe = read_file(path)
             let text = if maybe != nil: maybe else: ""
             let records, ops = conf_parse_records(text)
             for(records) rec:
-                if conf_sabotage_applies(rec, "align-padding"):
-                    expected += 1
-    var sabotaged = 0
+                if rec.name == name:
+                    found = true
+                    was_refused = rec.refused
+        if not conf_check(found, "control: padding vector " + name + " is not in the corpus"):
+            return
+        if not conf_check(was_refused, "control: padding vector " + name + " is not refused"):
+            return
+    var red:[string] = []
     conf_soft = true
     for(files) path:
         let b, failed, count = conf_run_file(path, "align-padding")
-        sabotaged += b
         for(failed) n:
-            if not conf_check(find_string(n, "non-zero-pad") >= 0 or find_string(n, "pad-bit") >= 0 or find_string(n, "non-zero-align-padding") >= 0, "control: sabotage went red on " + n):
-                return
+            red.push(n)
     conf_soft = false
-    if not conf_check(expected > 0 and sabotaged == expected, "control: sabotage red set " + string(sabotaged) + " != " + string(expected)):
+    if not conf_check(length(red) == length(padding_vectors), "control: sabotage red set has " + string(length(red)) + " names, expected " + string(length(padding_vectors))):
         return
+    for(padding_vectors) name:
+        if not conf_check(conf_name_in(red, name), "control: sabotage did not go red on " + name):
+            return
+    for(red) name:
+        if not conf_check(conf_name_in(padding_vectors, name), "control: sabotage went red on unexpected " + name):
+            return
