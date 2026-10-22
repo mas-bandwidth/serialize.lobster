@@ -15,6 +15,7 @@ FUZZ_STAGE   := $(FUZZ_BUILD)/stage
 FUZZ_DRIVER  := $(FUZZ_STAGE)/fuzz_driver.lobster
 FUZZ_WORK    := $(FUZZ_BUILD)/work
 FUZZ_NORANGE := $(FUZZ_BUILD)/stage-norange
+FUZZ_REASON  := $(FUZZ_BUILD)/stage-reason
 
 .PHONY: fuzz fuzz-ref
 
@@ -68,4 +69,17 @@ fuzz: toolchain-lobster $(FUZZ_HOST) $(FUZZ_DRIVER)
 		echo "reader negative control went red for the wrong reason (see build/fuzz/reader.log)"; exit 1; \
 	else \
 		echo "reader negative control: RED as expected (mutant: accept mismatch; see build/fuzz/reader.log)"; \
+	fi
+	@echo "reason negative control: the Lobster reader names invalid_utf8 where embedded_nul is due"
+	@rm -rf $(FUZZ_REASON) && cp -r $(FUZZ_STAGE) $(FUZZ_REASON)
+	@sed -i 's/^        return serialize_refusal_embedded_nul$$/        return serialize_refusal_invalid_utf8/' $(FUZZ_REASON)/serialize_bytes.lobster
+	@grep -q '^        return serialize_refusal_invalid_utf8$$' $(FUZZ_REASON)/serialize_bytes.lobster || \
+		{ echo "reason negative control: the sabotage needle no longer matches"; exit 1; }
+	@if $(FUZZ_HOST) --lobster $(LOBSTER) --driver $(FUZZ_REASON)/fuzz_driver.lobster --tmp $(FUZZ_WORK) \
+		>$(FUZZ_BUILD)/reason.log 2>&1; then \
+		echo "reason negative control DID NOT go red"; exit 1; \
+	elif ! grep -q 'refusal reason mismatch (C embedded_nul, Lobster invalid_utf8)' $(FUZZ_BUILD)/reason.log; then \
+		echo "reason negative control went red for the wrong reason (see build/fuzz/reason.log)"; exit 1; \
+	else \
+		echo "reason negative control: RED as expected (refusal reason mismatch; see build/fuzz/reason.log)"; \
 	fi

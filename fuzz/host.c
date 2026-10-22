@@ -550,6 +550,10 @@ static int make_mutant(Program *p) {
         int extra = 1 + (int)rnd(4);
         for (int k = 0; k < extra; k++) p->mutant[p->nmutant++] = (unsigned char)rng_next();
     }
+    /* Half the mutants keep their random mutation (bit flips, truncation, or
+       appended bytes that reach the end's trailing_data); the other half are
+       targeted.  The split is by id, so the generator stream is untouched. */
+    if (p->id & 2) return 0;
     return make_targeted_mutant(p);
 }
 

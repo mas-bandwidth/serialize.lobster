@@ -738,6 +738,9 @@ def conf_run_record(rec:conf_rec, what:string) -> bool:
                 return conf_check(false, what + ": step " + string(i) + " did not fail after a refusal")
             if r.bits_processed() != before:
                 return conf_check(false, what + ": step " + string(i) + " consumed bits after a refusal")
+            // ...and writes nothing: its destination is still the sentinel.
+            if not conf_val_equal(v, conf_sentinel(step)):
+                return conf_check(false, what + ": step " + string(i) + " wrote its destination after a refusal")
         if not ok and failed_at < 0:
             failed_at = i
         vals.push(v)
