@@ -4,24 +4,26 @@
 
 ## The Lobster port of serialize
 
-The Lobster port of serialize, the open-source bitpacking serializer: the same wire as serialize.c, byte for byte, with the same refusals. The work is on the integration branch sprint/serialize-lobster and is not yet on main.
+The Lobster port of serialize, the open-source bitpacking serializer: the same wire as serialize.c, byte for byte, with the same refusals, each for the same reason. Format 2.0 (serialize v2.0.0): finite floats only, an end that refuses trailing bytes and set padding, canonical int_relative, and no wstring.
 
 <!-- nova-work:port:start -->
 
 | feature | lobster |
 |---|:---:|
 | Design, family stubs and test runner | ✅ |
-| STANDARD.md matches serialize v1.17.0 | ✅ |
+| STANDARD.md matches serialize v2.0.0 | ✅ |
 | Fleet CI workflow and its invariant test | ✅ |
 | 64-bit bitpacker and window reader | ✅ |
 | Ranged integers, int64, int128, uint128 and relative ints | ✅ |
 | float, double, fixed and compressed floats | ✅ |
-| Bytes, strings, wide strings, align and objects | ✅ |
+| Bytes, strings, align and objects | ✅ |
+| Format 2.0: refusal reasons, finite floats, end, canonical int_relative | ✅ |
+| Every per-rule control fails exactly its expected vectors | ✅ |
 | Whole conformance corpus, byte for byte with serialize.c | ✅ |
 | Differential fuzzing against serialize.c | ✅ |
 | Benchmark against serialize.c, C++ serialize and serialize.rs | ❌ |
 | Goose vs C++ vs Rust (and Lobster) benchmark report | ❌ |
-| complete | 81% |
+| complete | 84% |
 
 [Source data](docs/roadmap.sexp)
 
