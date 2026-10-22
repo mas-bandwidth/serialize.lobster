@@ -20,6 +20,7 @@ struct int_record:
     bytes:[int] = []
     expect_text:string = ""
     refused:bool = false
+    reason:string = ""
     consumed:int = 0
     canonical:bool = false
 
@@ -114,7 +115,7 @@ def int_canonical(w:serialize_write_stream, rec:int_record, what:string):
 
 def int_parse_records(text:string) -> [int_record], int:
     let lines = tokenize(text, "\n", "")
-    var records:[int_record] = []
+    let records:[int_record] = []
     var current = int_record {}
     var have = false
     var operations = 0
@@ -156,8 +157,9 @@ def int_parse_records(text:string) -> [int_record], int:
                     current.bytes.push(b)
         elif length(line) >= 7 and substring(line, 0, 7) == "expect ":
             let expect = substring(line, 7, -1)
-            if expect == "refused":
+            if length(expect) > 8 and substring(expect, 0, 8) == "refused ":
                 current.refused = true
+                current.reason = substring(expect, 8, -1)
             else:
                 let key, value = split_string(expect, " = ")
                 int_check(key == "value", "bad expect " + expect)
@@ -193,6 +195,7 @@ def int_run_bits(rec:int_record, what:string):
             v, ok = r.serialize_bits64(v, width)
         int_check(not ok, what + ": expected refusal")
         int_check(r.error(), what + ": refusal did not latch")
+        int_check(r.refusal_name() == rec.reason, what + ": refused as " + r.refusal_name() + ", the vector states " + rec.reason)
         int_check(v == 0x12345678, what + ": refusal touched the destination")
         let before = r.bits_processed()
         var v2 = 0x12345678
@@ -240,6 +243,7 @@ def int_run_bool(rec:int_record, what:string):
         var ok = true
         v, ok = r.serialize_bool(v)
         int_check(not ok and v == true and r.error(), what + ": expected refusal")
+        int_check(r.refusal_name() == rec.reason, what + ": refused as " + r.refusal_name() + ", the vector states " + rec.reason)
         let before = r.bits_processed()
         var v2 = true
         var ok2 = true
@@ -275,6 +279,7 @@ def int_run_uint128(rec:int_record, what:string):
         v, ok = r.serialize_uint128(v)
         int_check(not ok, what + ": expected refusal")
         int_check(r.error(), what + ": refusal did not latch")
+        int_check(r.refusal_name() == rec.reason, what + ": refused as " + r.refusal_name() + ", the vector states " + rec.reason)
         int_check(serialize_uint128_equal(v, sentinel), what + ": refusal touched the destination")
         let before = r.bits_processed()
         var v2 = sentinel
@@ -331,6 +336,7 @@ def int_run_ranged(rec:int_record, what:string):
             ok = vok
             int_check(not ok, what + ": expected refusal")
             int_check(r.error(), what + ": refusal did not latch")
+            int_check(r.refusal_name() == rec.reason, what + ": refused as " + r.refusal_name() + ", the vector states " + rec.reason)
             int_check(serialize_int128_equal(v, min128), what + ": refusal touched the destination")
             let before = r.bits_processed()
             var v2 = min128
@@ -347,6 +353,7 @@ def int_run_ranged(rec:int_record, what:string):
             ok = vok
             int_check(not ok, what + ": expected refusal")
             int_check(r.error(), what + ": refusal did not latch")
+            int_check(r.refusal_name() == rec.reason, what + ": refused as " + r.refusal_name() + ", the vector states " + rec.reason)
             int_check(v == min64, what + ": refusal touched the destination")
             let before = r.bits_processed()
             var v2 = min64
@@ -418,6 +425,7 @@ def int_run_relative(rec:int_record, what:string):
         v, ok = r.serialize_int_relative(previous, v)
         int_check(not ok, what + ": expected refusal")
         int_check(r.error(), what + ": refusal did not latch")
+        int_check(r.refusal_name() == rec.reason, what + ": refused as " + r.refusal_name() + ", the vector states " + rec.reason)
         int_check(v == previous, what + ": refusal touched the destination")
         let before = r.bits_processed()
         var v2 = previous

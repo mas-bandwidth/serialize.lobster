@@ -62,7 +62,41 @@ def serialize_shl(v:int, n:int) -> int:
 // ---------------------------------------------------------------------------
 
 // The format version this port implements (STANDARD.md, Format version).
-let serialize_format_version = "1.1"
+let serialize_format_version = "2.0"
+
+// ---------------------------------------------------------------------------
+// refusal reasons (STANDARD.md, Refusal reasons): the closed list, spelled by
+// serialize_refusal_name exactly as STANDARD.md spells them. A stream latches
+// the FIRST refusal's reason; a later refusal on a failed stream is its echo
+// and keeps it.
+// ---------------------------------------------------------------------------
+
+enum serialize_refusal:
+    serialize_refusal_none
+    serialize_refusal_past_end
+    serialize_refusal_value_out_of_range
+    serialize_refusal_nonzero_padding
+    serialize_refusal_trailing_data
+    serialize_refusal_non_finite_float
+    serialize_refusal_invalid_utf8
+    serialize_refusal_embedded_nul
+    serialize_refusal_non_canonical
+
+let serialize_refusal_names = [
+    "none",
+    "past_end",
+    "value_out_of_range",
+    "nonzero_padding",
+    "trailing_data",
+    "non_finite_float",
+    "invalid_utf8",
+    "embedded_nul",
+    "non_canonical"
+]
+
+// The family-wide name of a reason ("past_end"); "none" for none.
+def serialize_refusal_name(refusal:serialize_refusal) -> string:
+    return serialize_refusal_names[int(refusal)]
 
 abstract class serialize_stream:
     // The latch: once true every operation fails, consuming nothing and
@@ -70,14 +104,25 @@ abstract class serialize_stream:
     // terminal"). Set only through fail().
     failed:bool = false
 
+    // Why the stream failed: the FIRST refusal's reason, none until then
+    // (STANDARD.md, Refusal reasons). Set only through fail().
+    refusal:serialize_refusal = serialize_refusal_none
+
     def ok() -> bool:
         return not failed
 
     def error() -> bool:
         return failed
 
-    // serialize_write_fail / serialize_read_fail: latch, return false.
-    def fail() -> bool:
+    // The first refusal's name, as STANDARD.md spells it ("none" before one).
+    def refusal_name() -> string:
+        return serialize_refusal_name(refusal)
+
+    // serialize_write_fail / serialize_read_fail: latch with a reason, return
+    // false. Only the first reason is kept; later ones are echoes.
+    def fail(reason:serialize_refusal) -> bool:
+        if not failed:
+            refusal = reason
         failed = true
         return false
 
@@ -181,7 +226,7 @@ def write_gate(s::serialize_write_stream, bits:int) -> bool:
     if failed:
         return false
     if bits_written + bits > num_bits:
-        return s.fail()
+        return s.fail(serialize_refusal_past_end)
     return true
 
 // Read: refuse when latched; refuse (latch) past the end, the test
@@ -191,7 +236,7 @@ def read_gate(s::serialize_read_stream, bits:int) -> bool:
     if failed:
         return false
     if bits_read + bits > num_bits:
-        return s.fail()
+        return s.fail(serialize_refusal_past_end)
     return true
 
 // Measure: add the width; never refuses (STANDARD.md, The Measure Stream).
@@ -209,7 +254,7 @@ def serialize_fixed_width_write(s::serialize_write_stream, value:int, bits:int) 
     if failed:
         return false
     if bits < 64 and (value < 0 or value > serialize_mask(bits)):
-        return s.fail()
+        return s.fail(serialize_refusal_value_out_of_range)
     if not s.write_gate(bits):
         return false
     if bits <= 32:
@@ -282,8 +327,41 @@ def serialize_align(s::serialize_read_stream) -> bool:
     if not s.read_gate(n):
         return false
     if n > 0 and s.unpack_bits(n) != 0:
-        return s.fail()
+        return s.fail(serialize_refusal_nonzero_padding)
     return true
 
 def serialize_align(s::serialize_measure_stream) -> bool:
     return s.measure_bits(7)
+
+// ---------------------------------------------------------------------------
+// end (STANDARD.md, end): the object ends at the bit index after its last
+// field, and the stream ends there too. A writer's end emits nothing and a
+// measure's costs nothing. A reader's end consults the failure state first,
+// then refuses a whole byte or more left over as trailing_data (even a zero
+// byte), then reads the final byte's unused bits and refuses a set one as
+// nonzero_padding; trailing data is checked first, and the bits of the last
+// field are never examined. An accepted end leaves the stream exactly
+// consumed. A packet reader reads the end after the top-level object.
+// ---------------------------------------------------------------------------
+
+def serialize_end(s::serialize_write_stream) -> bool:
+    return s.write_gate(0)
+
+def serialize_end(s::serialize_read_stream) -> bool:
+    if not s.read_gate(0):
+        return false
+    let remaining = s.bits_remaining()
+    if remaining >= 8:
+        return s.fail(serialize_refusal_trailing_data)
+    // Fewer than 8 bits remain, so this is all of them: the final byte's padding.
+    let padding_bits = remaining & 7
+    if padding_bits > 0:
+        let padding = s.unpack_bits(padding_bits)
+        if padding != 0:
+            return s.fail(serialize_refusal_nonzero_padding)
+    return true
+
+def serialize_end(s::serialize_measure_stream) -> bool:
+    if s.failed:
+        return false
+    return s.measure_bits(0)

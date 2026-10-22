@@ -6,27 +6,25 @@ schema's Lobster leg. This page settles every decision, so each family card
 after it fills one set of files and decides nothing. Sections (a) to (g) are
 the contract.
 
-**The oracle.** serialize.c v1.11.2 (`7303fa47cada102af10c396c6dd5aa1f0e99f2ab`)
-is the reference. This port matches it byte for byte and refusal for refusal.
+**The oracle.** serialize.c v2.0.0 (`e11585b0dfbf214ed37c442d5f8b6133fd8b10df`),
+format 2.0, is the reference. This port matches it byte for byte and refusal for refusal.
 serialize.luau (branch `sprint/serialize-luau`,
 `e9acef6fee5efbb1c7b33a25843dba9aa59f6b22`) is the closest worked port and
 shaped this page. Both are read and never imported. STANDARD.md's
 Implementation Law says sibling ports are never sources, so where the Luau page
 and serialize.c disagree, serialize.c and STANDARD.md decide.
 
-**The vendored standard.** `STANDARD.md` and `conformance/*.txt` are copied
-VERBATIM from mas-bandwidth/serialize at tag v1.17.0
-(`56a1b590af814474b56ff72b0d05d4be4d7cf41b`). They are the same bytes as
-serialize.c v1.11.2's own copies. All of these came back empty (checked
-2026-10-19 on hulk):
+**The vendored standard.** `STANDARD.md`, `IMPLEMENTING.md`, `conformance/`
+and `conformance-controls/` are copied
+VERBATIM from mas-bandwidth/serialize at tag v2.0.0
+(merge `8dae4cc08b7b46c9b5fcf08dad5e99ad1348b76b`); the standard and
+the corpus are byte-identical at the format 2.0 pin
+`dedf58efa93832fd243dbf3a2a1ca0a91c46b14b`. `tools/revendor.sh <tag>` copies
+them from a clone of the tag and diffs each one, and the CI `corpus` job diffs
+all four against the tag on every run. The corpus holds 18 files: format 2.0
+removed `wstring.txt` and added `end.txt`.
 
-- `diff -r conformance <serialize v1.17.0>/conformance`
-- `diff -r conformance <serialize.c v1.11.2>/conformance`
-- `cmp STANDARD.md <serialize v1.17.0>/STANDARD.md`
-- `cmp STANDARD.md <serialize.c v1.11.2>/STANDARD.md`
-
-Both directories hold the same 18 files. Nothing here edits them; a change
-arrives by re-vendoring from a new tag.
+Nothing here edits them; a change arrives by re-vendoring from a new tag.
 
 **The pin.** Lobster v2026.8 is pinned through its release zip, with the sha256
 below. The tag `v2026.8` is the annotated tag object
@@ -75,7 +73,20 @@ and `ok`, which is `true` on success and `false` on a refusal.
 Lobster discards a return value that has no variable to receive it, so
 `m.x = s.serialize_int(m.x, 0, 7)` is the usual form. The latch, (e), makes it
 safe to check `s.ok()` once at the end. Operations that carry no value
-(`serialize_align`, `serialize_object`) return `ok` alone.
+(`serialize_align`, `serialize_end`, `serialize_object`) return `ok` alone.
+
+**A packet ends with its end.** STANDARD.md, end: a reader reads
+`s.serialize_end()` after the last field of the packet's top-level object,
+over a stream holding exactly the bytes the writer reported. It refuses a
+whole byte or more left over as `trailing_data` and a set bit in the final
+byte's unused bits as `nonzero_padding`. A writer's end emits nothing and a
+measure's costs nothing, so the same message function serves all three:
+
+    def serialize(m::message, s) -> bool:
+        m.health = s.serialize_int(m.health, 0, 100)
+        m.alive = s.serialize_bool(m.alive)
+        s.serialize_end()
+        return s.ok()
 
 ### The streams (src/serialize_stream.lobster)
 
@@ -91,7 +102,8 @@ safe to check `s.ok()` once at the end. Operations that carry no value
 | `s.bits_remaining()` (read) | `serialize_read_bits_remaining` | |
 | `s.align_bits()` (write, read) | `serialize_write_align_bits`, `serialize_read_align_bits` | |
 | `s.error()`, `s.ok()` | `serialize_*_error` | `ok()` is `not error()` |
-| `s.fail()` | `serialize_write_fail`, `serialize_read_fail` | latches the stream and returns `false` |
+| `s.fail(reason)` | `serialize_write_fail`, `serialize_read_fail` | latches the stream with a reason and returns `false`; only the first reason is kept |
+| `s.refusal`, `s.refusal_name()` | `serialize_read_refusal`, `serialize_refusal_name` | the first refusal's reason, `serialize_refusal_none` (`"none"`) before one |
 | `s.is_writing()`, `s.is_reading()` | (C++ `IsWriting`, `IsReading`) | added, see below |
 
 Deviations, each with its reason:
@@ -126,6 +138,7 @@ Deviations, each with its reason:
 | `serialize_bits64(value, bits)` | int (u64 pattern); bits in [1,64] | `serialize_*_bits64` | bitpacker |
 | `serialize_bool(value)` | bool | `serialize_*_bool` | stream |
 | `serialize_align()` | returns ok | `serialize_*_align` | stream |
+| `serialize_end()` | returns ok | `serialize_*_end` | stream |
 | `serialize_uint8(value)`, `serialize_uint16`, `serialize_uint32` | int | `serialize_*_uint8/16/32` | stream |
 | `serialize_uint64(value)` | int (u64 pattern) | `serialize_*_uint64` | stream |
 | `serialize_int(value, min, max)` | int; min, max int32 | `serialize_*_int` | int |
@@ -142,19 +155,20 @@ Deviations, each with its reason:
 | `serialize_compressed_float_precomputed(value, max_integer_value, bits, delta, min)` | float | `serialize_*_compressed_float_precomputed` | compressed_float |
 | `serialize_bytes(data, bytes)` | string; returns data | `serialize_*_bytes` | bytes |
 | `serialize_string(value, buffer_size)` | string | `serialize_*_string` | bytes |
-| `serialize_wstring(value, buffer_size)` | `[int]` of code points | `serialize_*_wstring` | bytes |
 | `serialize_object(object)` | returns ok | (STANDARD.md, object) | object |
 
 The measure forms take the same arguments as the write forms. A measure uses
 only what sets the width: the bounds, `bits`, and the value only for
-int_relative, string and wstring. That is the doctrine serialize.c states for
+int_relative and string. That is the doctrine serialize.c states for
 its measure functions.
 
 ### The free functions
 
 | Lobster | serialize.c | family file |
 |---|---|---|
-| `serialize_format_version` (`"1.1"`) | STANDARD.md, Format version | stream |
+| `serialize_format_version` (`"2.0"`) | STANDARD.md, Format version | stream |
+| `serialize_refusal` (enum), `serialize_refusal_name(r)`, `serialize_refusal_names` | `serialize_refusal_t`, `serialize_refusal_name` | stream |
+| `serialize_float32_bits_are_finite(u)`, `serialize_float64_bits_are_finite(u)` | (C++ `float_bits_are_finite`, `double_bits_are_finite`) | float |
 | `serialize_bits_required(min, max)` | `serialize_bits_required` (the uint32 domain) | bitpacker |
 | `serialize_bits_required64(min, max)` | `serialize_bits_required64` (u64 patterns) | bitpacker |
 | `serialize_uint128 { lo, hi }`, `serialize_int128 { lo, hi }` | `serialize_uint128_t`, `serialize_int128_t` | int128 |
@@ -174,18 +188,23 @@ no terminator to copy.
 (STANDARD.md, Reader Obligations: zero-bit reads consult the latch). Otherwise
 it calls `o.serialize(s)`. That is the caller's own generic function, which is
 specialized per stream and returns `true` on success. When it returns `false`,
-the stream latches through `s.fail()`, so a refused object leaves the stream
-terminal. The operation adds no bytes of its own.
+the stream latches through `s.fail(serialize_refusal_value_out_of_range)`, so a
+refused object leaves the stream terminal: a refusal inside the object keeps
+its own first reason, and an object that rejects a decoded value of its own,
+with no stream refusal, reports `value_out_of_range`. The operation adds no
+bytes of its own.
 
 **bool.** A Lobster `bool` is an enum. A read returns `bool(bit)`.
 
-**wstring.** Lobster has no `wchar_t`, so a wide string is an `[int]` of
-Unicode code points, the shape `string_to_unicode` returns. This is serialize.c
-on a 4-byte `wchar_t` platform. On write, an astral code point is split into
-its surrogate pair. `buffer_size` counts UTF-16 units: the unit count must be
-at most `buffer_size - 1`. On read, a pair is recombined into one code point.
-Every refusal in STANDARD.md wstring applies: a group above 0xFFFF, a zero
-unit, and an unpaired or misordered surrogate.
+**Refusal reasons.** Every refusal names its rule from STANDARD.md's closed
+list, spelled by `serialize_refusal_name` exactly as STANDARD.md spells it:
+`past_end`, `value_out_of_range`, `nonzero_padding`, `trailing_data`,
+`non_finite_float`, `invalid_utf8`, `embedded_nul`, `non_canonical`. The
+stream latches the FIRST reason; a later refusal on a failed stream is its
+echo and keeps it. The idiom is an accessor, `s.refusal_name()`, next to the
+latch.
+
+**wstring is gone.** Format 2.0 removed it: text is UTF-8 and only UTF-8.
 
 ## (b) BIT ORDER AND ENDIANNESS
 
@@ -301,8 +320,11 @@ Decided:
   float32 operands equals the float32 operation.
 - `serialize_double` moves its bits through `write_float64_le` and
   `read_uint64_le`, and back the reverse way.
-- A float32 read never converts: the 32 wire bits become the value through
-  `serialize_float32_from_bits`, so NaN payloads survive a read.
+- A float32 read never converts: the 32 wire bits are tested for a finite
+  pattern on the RAW bits, then become the value through
+  `serialize_float32_from_bits`, so every finite pattern, negative zero and
+  the subnormals included, is the value read. Format 2.0 carries finite
+  values only, so no NaN payload needs to survive anything.
 
 ## (d) BYTES
 
@@ -337,7 +359,7 @@ Decided:
 ## (e) WRITER AND READER
 
 **The writer is STRICT.** For every value, it emits exactly the bytes
-serialize.c v1.11.2 emits. serialize.c's write path is trusted and asserts in
+serialize.c v2.0.0 emits. serialize.c's write path is trusted and asserts in
 debug builds only (its ERRORS block, STANDARD.md's writes-trusted doctrine).
 This port has no NDEBUG, and every Lobster build runs the same code, so
 serialize.c's write contracts split in two, as the brief rules:
@@ -345,9 +367,11 @@ serialize.c's write contracts split in two, as the brief rules:
 - **Latch.** A value outside its range and a full buffer latch the stream and
   write nothing for that call. "A value outside its range" covers: `value`
   outside `[min, max]`, a bits value not below `2^bits`, a uint8, uint16 or
-  uint32 outside `[0, 2^n)`, a string or wstring too long for `buffer_size`,
-  and an int_relative `current` that is not above `previous` or is past
-  2^31 - 1. In serialize.c these are asserts, and in a release build they
+  uint32 outside `[0, 2^n)`, a string too long for `buffer_size`, a string
+  with a zero byte or that is not well-formed UTF-8 (NUL first, as on read),
+  a float or double that is NaN or an infinity (a finite double past FLT_MAX
+  narrows to an infinity), and an int_relative `current` that is past
+  2^31 - 1. Each latches with the reason a reader would give the same bytes. In serialize.c these are asserts, and in a release build they
   write wrong bytes or overrun the buffer; this port refuses them instead. The
   bounds check is of the whole operation's width before any bit moves
   (`write_gate(bits)` in src/serialize_stream.lobster), so a refused wide
@@ -365,8 +389,10 @@ serialize.c's write contracts split in two, as the brief rules:
     `integer_bits + fraction_bits` other than 32, 64 or 128 for the storage
     (STANDARD.md fixed)
   - compressed_float with `min >= max` or `res <= 0`, or a non-finite delta or
-    value count (serialize.c's asserts); a non-finite value on write
-    (STANDARD.md compressed_float, Non-finite inputs)
+    value count (serialize.c's asserts); a non-finite value on write; and, on
+    the write path only, a declaration whose top integer decodes non-finite
+    (`min + delta` rounded once to float32: STANDARD.md compressed_float). A
+    reader never aborts on it: it refuses the decode as `non_finite_float`.
   - precomputed constants with `max_integer_value < 1`, `bits` other than
     `serialize_bits_required(0, max_integer_value)`, or `delta <= 0` or
     non-finite
@@ -379,31 +405,46 @@ serialize.c's write contracts split in two, as the brief rules:
   The same contracts hold on the measure stream, where it has the argument;
   otherwise a measure never refuses (STANDARD.md, The Measure Stream).
 
-**Reads are forgiving only where serialize.c's are, and only where it is
-nearly free.** Trailing bits of the last byte are ignored, as STANDARD.md
-requires. Nothing else is forgiven.
+**Reads forgive nothing.** Every value has exactly one encoding (STANDARD.md,
+Reader Obligations), so a reader refuses every stream a conforming writer
+cannot produce. The final byte's padding and any trailing bytes are checked
+by `serialize_end`, which a packet reader calls after the top-level object.
 
 **Security trumps** (STANDARD.md, Reader Obligations and Implementation Law):
 
-- **Every refusal is made.** These are the refusals STANDARD.md and
-  serialize.c state:
-  - a read past the end
-  - a decoded value outside `[min, max]`
-  - an offset outside its span (int128, fixed)
-  - nonzero align padding, including inside bytes and string
-  - an int_relative reconstruction outside `[0, 2^31 - 1]` or not above
-    `previous`, read in a width that cannot wrap
-  - a string with a NUL, or malformed UTF-8: overlongs, surrogates
-    D800-DFFF, anything above U+10FFFF, truncated sequences
-  - a wstring group above 0xFFFF, a zero unit, or an unpaired or misordered
-    surrogate
+- **Every refusal is made, for its stated reason.** These are the refusals
+  STANDARD.md and serialize.c state:
+  - a read past the end (`past_end`)
+  - a decoded value outside `[min, max]`, an offset outside its span, a string
+    length above `buffer_size - 1`, a compressed integer above
+    `max_integer_value`, an int_relative reconstruction outside
+    `[0, 2^31 - 1]` or not above `previous`, read in a width that cannot wrap
+    (`value_out_of_range`)
+  - nonzero align padding, including inside bytes and string, checked BEFORE
+    the payload's length; and a set bit in the final byte at the end
+    (`nonzero_padding`)
+  - a whole byte or more after the end, checked before the padding
+    (`trailing_data`)
+  - a float or double whose exponent field is all ones, tested on the raw
+    bits, and a compressed float whose decode is not finite
+    (`non_finite_float`)
+  - a string with a zero byte (`embedded_nul`), scanned over the whole payload
+    BEFORE the UTF-8 check; malformed UTF-8: overlongs, surrogates D800-DFFF,
+    anything above U+10FFFF, truncated sequences (`invalid_utf8`)
+  - an int_relative absolute tier carrying a current in the domain, above
+    `previous` and no more than 69914 above it (`non_canonical`), after the
+    domain and ordering rule
+- **A claimed length is checked before it is allocated.** A string read
+  aligns, checks the padding, and holds the claimed length against the bytes
+  that remain (`past_end`) before it allocates the payload, so a short stream
+  claiming a huge length allocates nothing.
 - **A refused primitive read leaves its destination unwritten.** The read
   returns its input value. A read into a caller's buffer (`serialize_bytes`)
   leaves the buffer unspecified, as STANDARD.md allows.
 - **The stream is terminal after a refusal.** The first refusal sets
-  `failed` through `s.fail()`. Every later operation tests it before anything
+  `failed` and its reason through `s.fail(reason)`. Every later operation tests it before anything
   else, zero-bit ones included (a degenerate range, an aligned align,
-  zero-count bytes, object), and returns `false` with its input value,
+  zero-count bytes, object, end), and returns `false` with its input value,
   consuming nothing.
 - **Hostile bytes never abort.** An abort is decided by the caller's own
   arguments, never by data.
@@ -425,7 +466,7 @@ requires. Nothing else is forgiven.
 | `src/serialize_float.lobster` | `serialize_float` and `serialize_double` on every stream; the float32 and float64 routes (c) | serialize-lobster-floats |
 | `src/serialize_fixed.lobster` | `serialize_fixed32`, `serialize_fixed64` and `serialize_fixed128` on every stream | serialize-lobster-floats |
 | `src/serialize_compressed_float.lobster` | `serialize_compressed_float` and `serialize_compressed_float_precomputed` on every stream; `serialize_compressed_float_params` | serialize-lobster-floats |
-| `src/serialize_bytes.lobster` | `serialize_bytes`, `serialize_string` and `serialize_wstring` on every stream | serialize-lobster-strings |
+| `src/serialize_bytes.lobster` | `serialize_bytes` and `serialize_string` on every stream | serialize-lobster-strings |
 | `src/serialize_object.lobster` | `serialize_object` on every stream | serialize-lobster-strings |
 
 Every signature in the family files is final and present now. Each body is a
@@ -536,10 +577,21 @@ name test/smoke/smoke_test.lobster.
   services. A test clock, where one is ever needed, is an argument starting at
   1000.0. Only `make bench` programs read `seconds_elapsed()`, and they are not
   tests.
-- **Conformance.** A later card reads the vectors from
+- **Conformance.** test/conformance reads every vector of
   `conformance/<name>.txt` (staged beside the run) and checks every record
-  against this library, byte for byte and refusal for refusal (STANDARD.md,
-  The vector format).
+  against this library, byte for byte and refusal for refusal, each refusal for
+  the reason the vector states, every stream behind eight bytes of non-zero
+  slack (STANDARD.md, "What a runner checks").
+- **Controls.** `make controls` (tools/controls/controls.sh) runs, for every
+  `conformance-controls/<rule>.expected`, a staged copy of `src/` with that ONE
+  rule deleted by the line replacement in tools/controls/table.txt, and
+  requires its corpus failures to be exactly the listed vectors. It also runs
+  the reversed witnesses of tools/controls/witnesses.txt (the old behaviour of
+  a write-side rule planted back must turn its unit test red) and the
+  harness's own control (an unsabotaged reader must fail a control).
+- **Zero warnings.** tools/run_tests.sh fails any test whose program the
+  compiler warned about, src/ and test code alike; `make fuzz` refuses a
+  driver that compiles with warnings, and builds the C host with `-Werror`.
 
 ### The timing
 

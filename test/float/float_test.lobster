@@ -8,7 +8,10 @@
 // terminal. It prints the record count per file and fails unless the parser
 // saw exactly the file's operation count.
 //
-// Plus every float32 NaN payload class and both zeros through float, and
+// Plus the finite rule: every finite class (both zeros, the subnormals, the
+// largest finite) round trips bit for bit through float and double, every
+// non-finite class latches non_finite_float on write and is refused on read;
+// the compressed float decode that rounds to +inf is refused; and
 // compressed_float at min, max, max - res/2 and one ulp outside.
 import serialize
 
@@ -19,6 +22,7 @@ class serialize_float_record:
     param_values:[string]
     bytes:[int]
     refused:bool
+    reason:string
     expect_bits:bool
     bits:int
     expect_value:bool
@@ -39,7 +43,7 @@ def serialize_float_test_words(line:string) -> [string]:
 def serialize_float_test_new_record(op:string) -> serialize_float_record:
     return serialize_float_record {
         op: op, name: "", param_names: [], param_values: [], bytes: [],
-        refused: false, expect_bits: false, bits: 0, expect_value: false,
+        refused: false, reason: "", expect_bits: false, bits: 0, expect_value: false,
         value_text: "", consumed: -1, writer: false
     }
 
@@ -49,7 +53,7 @@ def serialize_float_test_hex(text:string) -> int:
         body = substring(body, 2, -1)
     var value = 0
     for(length(body)) i:
-        let digit, ok = string_to_int(substring(body, i, 1), 16)
+        let digit, _ok = string_to_int(substring(body, i, 1), 16)
         value = (value << 4) | digit
     return value
 
@@ -89,7 +93,7 @@ def serialize_float_test_parse_int128(text:string) -> serialize_int128:
     let base = if hexadecimal: 16 else: 10
     var acc = serialize_int128 { lo: 0, hi: 0 }
     for(length(body)) i:
-        let digit, ok = string_to_int(substring(body, i, 1), base)
+        let digit, _ok = string_to_int(substring(body, i, 1), base)
         if hexadecimal:
             acc = serialize_float_test_u128_add(serialize_float_test_u128_shl(acc, 4), serialize_int128 { lo: digit, hi: 0 })
         else:
@@ -131,8 +135,9 @@ def serialize_float_test_parse(text:string) -> [serialize_float_record]:
                 for(length(words) - 1) i:
                     current.bytes.push(serialize_float_test_hex(words[i + 1]))
             elif words[0] == "expect":
-                if length(words) >= 2 and words[1] == "refused":
+                if length(words) >= 3 and words[1] == "refused":
                     current.refused = true
+                    current.reason = words[2]
                 elif length(words) >= 4 and words[1] == "bits":
                     current.expect_bits = true
                     current.bits = serialize_float_test_hex(words[3])
@@ -226,6 +231,7 @@ def serialize_float_test_run_float_double(record:serialize_float_record, label:s
         serialize_float_test_check(not ok, label + ": refused read succeeded")
         serialize_float_test_check(value == 123.5, label + ": refusal changed its destination")
         serialize_float_test_check(s.error(), label + ": refusal latched no error")
+        serialize_float_test_check(s.refusal_name() == record.reason, label + ": refused as " + s.refusal_name() + ", the vector states " + record.reason)
         serialize_float_test_check_terminal_float(s, is_double, label)
         return
     serialize_float_test_check(ok, label + ": accepted read refused")
@@ -257,6 +263,7 @@ def serialize_float_test_run_fixed(record:serialize_float_record, label:string):
             serialize_float_test_check(not ok, label + ": refused read succeeded")
             serialize_float_test_check(value == 123456789, label + ": refusal changed its destination")
             serialize_float_test_check(s.error(), label + ": refusal latched no error")
+            serialize_float_test_check(s.refusal_name() == record.reason, label + ": refused as " + s.refusal_name() + ", the vector states " + record.reason)
             let before = s.bits_processed()
             var again = 123456789
             var ok2 = true
@@ -283,6 +290,7 @@ def serialize_float_test_run_fixed(record:serialize_float_record, label:string):
             serialize_float_test_check(not ok, label + ": refused read succeeded")
             serialize_float_test_check(value == 123456789, label + ": refusal changed its destination")
             serialize_float_test_check(s.error(), label + ": refusal latched no error")
+            serialize_float_test_check(s.refusal_name() == record.reason, label + ": refused as " + s.refusal_name() + ", the vector states " + record.reason)
             let before = s.bits_processed()
             var again = 123456789
             var ok2 = true
@@ -309,6 +317,7 @@ def serialize_float_test_run_fixed(record:serialize_float_record, label:string):
             serialize_float_test_check(not ok, label + ": refused read succeeded")
             serialize_float_test_check(value.lo == 0x1234 and value.hi == 0x5678, label + ": refusal changed its destination")
             serialize_float_test_check(s.error(), label + ": refusal latched no error")
+            serialize_float_test_check(s.refusal_name() == record.reason, label + ": refused as " + s.refusal_name() + ", the vector states " + record.reason)
             let before = s.bits_processed()
             var again = serialize_int128 { lo: 0x1234, hi: 0x5678 }
             var ok2 = true
@@ -340,6 +349,7 @@ def serialize_float_test_run_compressed(record:serialize_float_record, label:str
         serialize_float_test_check(not ok, label + ": refused read succeeded")
         serialize_float_test_check(value == 123.5, label + ": refusal changed its destination")
         serialize_float_test_check(s.error(), label + ": refusal latched no error")
+        serialize_float_test_check(s.refusal_name() == record.reason, label + ": refused as " + s.refusal_name() + ", the vector states " + record.reason)
         serialize_float_test_check_terminal_compressed(s, min, max, res, label)
         return
     serialize_float_test_check(ok, label + ": accepted read refused")
@@ -372,33 +382,113 @@ def serialize_float_test_run_file(name:string):
         serialize_float_test_run_record(record, name, index)
         index += 1
 
-// Every float32 NaN payload class and both zeros through float: write the bit
-// pattern, read it back and compare the pattern, never the value (STANDARD.md,
-// Floating Point, "Bit transparency — both directions").
-def serialize_float_test_nan_classes():
-    let patterns = [
+// Finite values only, every one bit exact (STANDARD.md, Floating Point).
+// Every finite class, both zeros and the subnormals included, round trips
+// bit for bit through float and double. Every non-finite class (both
+// infinities, quiet and signaling NaNs of either sign, payloads in either
+// half) latches non_finite_float on write and writes nothing, and on read is
+// refused on its raw bits with the destination untouched. A finite double
+// above FLT_MAX narrows to an infinity and is refused by the float writer.
+def serialize_float_test_finite_classes():
+    let finite32 = [
         0x00000000, 0x80000000,
-        0x7F800000, 0xFF800000,
-        0x7FC00000, 0xFFC00000,
-        0x7F800001, 0xFF800001,
-        0x7FDEAD00, 0xFFDEAD00,
-        0x7FFFFFFF, 0xFFFFFFFF,
-        0x00000001, 0x007FFFFF, 0x00800000, 0x7F7FFFFF
+        0x00000001, 0x007FFFFF, 0x80000001, 0x00800000,
+        0x3F800000, 0xBF800000, 0x7F7FFFFF, 0xFF7FFFFF
     ]
-    for(patterns) pattern:
+    for(finite32) pattern:
         let buf = ensure_size("", 8, 0)
         let w = serialize_write_stream(buf)
         var value = serialize_float32_from_bits(pattern)
         var ok = true
         value, ok = w.serialize_float(value)
         w.flush()
-        assert ok
-        assert read_uint32_le(buf, 0) == pattern
+        serialize_float_test_check(ok and read_uint32_le(buf, 0) == pattern, "finite float write " + string(pattern))
         let r = serialize_float_test_stream([pattern & 0xFF, serialize_shr(pattern, 8) & 0xFF, serialize_shr(pattern, 16) & 0xFF, serialize_shr(pattern, 24) & 0xFF])
         var got = 0.0
         got, ok = r.serialize_float(got)
-        assert ok
-        assert serialize_float32_bits(got) == pattern
+        serialize_float_test_check(ok and serialize_float32_bits(got) == pattern, "finite float read " + string(pattern))
+    let nonfinite32 = [
+        0x7F800000, 0xFF800000,
+        0x7FC00000, 0xFFC00000,
+        0x7F800001, 0xFF800001,
+        0x7FDEAD00, 0xFFDEAD00,
+        0x7FFFFFFF, 0xFFFFFFFF
+    ]
+    for(nonfinite32) pattern:
+        let w = serialize_write_stream(ensure_size("", 8, 0))
+        var value = serialize_float32_from_bits(pattern)
+        var ok = true
+        value, ok = w.serialize_float(value)
+        serialize_float_test_check(not ok and w.bits_processed() == 0 and w.refusal_name() == "non_finite_float", "non-finite float write " + string(pattern))
+        let r = serialize_float_test_stream([pattern & 0xFF, serialize_shr(pattern, 8) & 0xFF, serialize_shr(pattern, 16) & 0xFF, serialize_shr(pattern, 24) & 0xFF])
+        var got = 123.5
+        got, ok = r.serialize_float(got)
+        serialize_float_test_check(not ok and got == 123.5 and r.refusal_name() == "non_finite_float", "non-finite float read " + string(pattern))
+    // A finite double that narrows past FLT_MAX is an infinity on the wire.
+    let wide = serialize_write_stream(ensure_size("", 8, 0))
+    var big = 1.0e39
+    var big_ok = true
+    big, big_ok = wide.serialize_float(big)
+    serialize_float_test_check(not big_ok and wide.bits_processed() == 0 and wide.refusal_name() == "non_finite_float", "float write narrowing past FLT_MAX")
+
+    let finite64 = [
+        0x0000000000000000, 0x8000000000000000,
+        0x0000000000000001, 0x000FFFFFFFFFFFFF, 0x0010000000000000,
+        0x3FD5555555555555, 0x7FEFFFFFFFFFFFFF, 0xFFEFFFFFFFFFFFFF
+    ]
+    for(finite64) pattern:
+        let buf = ensure_size("", 8, 0)
+        let w = serialize_write_stream(buf)
+        var value = serialize_float64_from_bits(pattern)
+        var ok = true
+        value, ok = w.serialize_double(value)
+        w.flush()
+        serialize_float_test_check(ok and read_int64_le(buf, 0) == pattern, "finite double write " + string(pattern))
+        let r = serialize_read_stream_padded(buf)
+        var got = 0.0
+        got, ok = r.serialize_double(got)
+        serialize_float_test_check(ok and serialize_float64_bits(got) == pattern, "finite double read " + string(pattern))
+    let nonfinite64 = [
+        0x7FF0000000000000, 0xFFF0000000000000,
+        0x7FF8000000000000, 0xFFF8000000000000,
+        0x7FF0000000000001, 0x7FF0000100000000,
+        0x7FFFFFFFFFFFFFFF, 0xFFFFFFFFFFFFFFFF
+    ]
+    for(nonfinite64) pattern:
+        let w = serialize_write_stream(ensure_size("", 8, 0))
+        var value = serialize_float64_from_bits(pattern)
+        var ok = true
+        value, ok = w.serialize_double(value)
+        serialize_float_test_check(not ok and w.bits_processed() == 0 and w.refusal_name() == "non_finite_float", "non-finite double write " + string(pattern))
+        let buf = ensure_size("", 8, 0)
+        write_int64_le(buf, 0, pattern)
+        let r = serialize_read_stream_padded(buf)
+        var got = 123.5
+        got, ok = r.serialize_double(got)
+        serialize_float_test_check(not ok and got == 123.5 and r.refusal_name() == "non_finite_float", "non-finite double read " + string(pattern))
+
+// The compressed float decode must be finite (STANDARD.md, compressed_float):
+// over [3 * 2^103, FLT_MAX] at resolution 2^104 the top integer decodes to
+// +inf. The reader refuses that decode as non_finite_float with its
+// destination untouched, and the integer below it decodes finite; a measure
+// of the declaration aborts nothing.
+def serialize_float_test_compressed_finite_decode():
+    let min = serialize_float32_from_bits(0x73C00000)
+    let max = serialize_float32_from_bits(0x7F7FFFFF)
+    let res = serialize_float32_from_bits(0x73800000)
+    let max_integer_value, bits, delta = serialize_compressed_float_params(min, max, res)
+    serialize_float_test_check(max_integer_value == 16777214 and bits == 24 and serialize_float32_bits(delta) == 0x7F7FFFFE, "compressed finite: the constants of the declaration")
+    let top = serialize_float_test_stream([0xFE, 0xFF, 0xFF])
+    var got = 123.5
+    var ok = true
+    got, ok = top.serialize_compressed_float(got, min, max, res)
+    serialize_float_test_check(not ok and got == 123.5 and top.refusal_name() == "non_finite_float", "compressed finite: the decode of the top integer is refused")
+    let below = serialize_float_test_stream([0xFD, 0xFF, 0xFF])
+    got, ok = below.serialize_compressed_float(got, min, max, res)
+    serialize_float_test_check(ok and serialize_float32_bits_are_finite(serialize_float32_bits(got)), "compressed finite: the integer below the top decodes finite")
+    let m = serialize_measure_stream()
+    got, ok = m.serialize_compressed_float(got, min, max, res)
+    serialize_float_test_check(ok and m.bits_processed() == 24, "compressed finite: a measure of the declaration")
 
 // compressed_float's writer at min, max, max - res/2 and one ulp outside
 // (STANDARD.md, compressed_float): [0,10] at resolution 0.01 has
@@ -408,7 +498,7 @@ def serialize_float_test_compressed_bounds():
     let min = 0.0
     let max = 10.0
     let res = 0.01
-    let max_integer_value, bits, delta = serialize_compressed_float_params(min, max, res)
+    let max_integer_value, bits, _delta = serialize_compressed_float_params(min, max, res)
     assert max_integer_value == 1000
     assert bits == 10
     let max_minus_half = serialize_float32_round(max - serialize_float32_round(res * 0.5))
@@ -442,7 +532,8 @@ def TestSerializeFloat():
     serialize_float_test_run_file("double")
     serialize_float_test_run_file("fixed")
     serialize_float_test_run_file("compressed_float")
-    serialize_float_test_nan_classes()
+    serialize_float_test_finite_classes()
+    serialize_float_test_compressed_finite_decode()
     serialize_float_test_compressed_bounds()
 
 // ---------------------------------------------------------------------------
@@ -485,3 +576,18 @@ def TestSerializeFloatFixedMinAboveMaxAbort():
 def TestSerializeFloatPrecomputedBitsAbort():
     let w = serialize_write_stream(ensure_size("", 8, 0))
     w.serialize_compressed_float_precomputed(0.5, 1000, 9, 10.0, 0.0)
+
+// The write path asserts the declaration's top decode, min + delta rounded
+// once, is finite (STANDARD.md, compressed_float): [3 * 2^103, FLT_MAX] at
+// resolution 2^104 is a non-conforming declaration, so a write aborts.
+// expect-abort: serialize: compressed float declaration must decode its top integer finite (min + delta)
+def TestSerializeFloatCompressedNonFiniteTopAbort():
+    let w = serialize_write_stream(ensure_size("", 8, 0))
+    w.serialize_compressed_float(serialize_float32_from_bits(0x73C00000), serialize_float32_from_bits(0x73C00000), serialize_float32_from_bits(0x7F7FFFFF), serialize_float32_from_bits(0x73800000))
+
+// expect-abort: serialize: compressed float declaration must decode its top integer finite (min + delta)
+def TestSerializeFloatPrecomputedNonFiniteTopAbort():
+    let w = serialize_write_stream(ensure_size("", 8, 0))
+    let min = serialize_float32_from_bits(0x73C00000)
+    let max_integer_value, bits, delta = serialize_compressed_float_params(min, serialize_float32_from_bits(0x7F7FFFFF), serialize_float32_from_bits(0x73800000))
+    w.serialize_compressed_float_precomputed(min, max_integer_value, bits, delta, min)

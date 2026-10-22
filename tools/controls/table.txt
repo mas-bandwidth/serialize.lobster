@@ -1,0 +1,27 @@
+# tools/controls/table.txt -- one sabotage per row, read by tools/controls/controls.sh.
+# Fields are TAB separated: control, file, the count of lines the needle must
+# match, the needle (an exact whole line of that file), and the line that
+# replaces it. Each replacement deletes ONE refusal rule and keeps the line
+# compiling: the added conjunct is false exactly when the rule would have fired
+# (the shape of the reference's CMakeLists.txt controls). The control name is
+# the reference's conformance-controls/<control>.expected, which is the oracle.
+#
+# int64-through-double: the reconstruction goes through a double, saturating
+# at INT64_MAX as the reference's patch does; this port's int64 read returns
+# min early on a degenerate range, so the degenerate case is left intact.
+# wrong-reason: the NUL rule still refuses, under invalid_utf8.
+align-padding	src/serialize_stream.lobster	1	    if n > 0 and s.unpack_bits(n) != 0:	    if n > 0 and s.unpack_bits(n) == 0xFFFFFFFF:
+ranged-reconstruction	src/serialize_int.lobster	1	    return min + offset, true	    return offset, true
+ranged-range	src/serialize_int.lobster	1	    if offset > span:	    if offset > span + 0xFFFFFFFF:
+fixed-degenerate-terminal	src/serialize_fixed.lobster	1	        return raw_min, not s.failed	        return raw_min, true
+float-finite	src/serialize_float.lobster	1	    if not serialize_float32_bits_are_finite(bits):	    if not serialize_float32_bits_are_finite(bits) and bits == 0:
+double-finite	src/serialize_float.lobster	1	    if not serialize_float64_bits_are_finite(bits):	    if not serialize_float64_bits_are_finite(bits) and bits == 0:
+compressed-float-finite	src/serialize_compressed_float.lobster	1	    if not serialize_float32_bits_are_finite(decoded_bits):	    if not serialize_float32_bits_are_finite(decoded_bits) and decoded_bits == 0:
+end-trailing-data	src/serialize_stream.lobster	1	    if remaining >= 8:	    if remaining >= 8 and remaining < 0:
+end-padding	src/serialize_stream.lobster	1	        if padding != 0:	        if padding == 0xFFFFFFFF:
+int-relative-canonical	src/serialize_int.lobster	1	                            if raw <= serialize_int32_max and raw > previous and raw - previous <= serialize_int_relative_bounded_max:	                            if raw <= serialize_int32_max and raw > previous and raw - previous <= serialize_int_relative_bounded_max and raw < 0:
+string-embedded-nul	src/serialize_bytes.lobster	1	    if string_has_nul(data, n):	    if string_has_nul(data, n) and n < 0:
+string-utf8	src/serialize_bytes.lobster	1	    if not string_utf8_valid(data, n):	    if not string_utf8_valid(data, n) and n < 0:
+string-utf8-surrogate	src/serialize_bytes.lobster	1	            if lead == 0xED and b1 >= 0xA0:	            if lead == 0xED and b1 >= 0xA0 and b1 > 0xFF:
+int64-through-double	src/serialize_int.lobster	1	    let result = min + offset	    let result = (if float(min + offset) >= 9223372036854775807.0: 9223372036854775807 else: int(float(min + offset)))
+wrong-reason	src/serialize_bytes.lobster	1	        return serialize_refusal_embedded_nul	        return serialize_refusal_invalid_utf8

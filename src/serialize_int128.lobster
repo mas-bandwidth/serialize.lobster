@@ -169,7 +169,7 @@ def serialize_int128(s:serialize_write_stream, value:serialize_int128, min:seria
         return value, false
     // A value outside [min, max] latches and writes nothing (DESIGN.md (e)).
     if serialize_int128_compare(value, min) < 0 or serialize_int128_compare(value, max) > 0:
-        return value, s.fail()
+        return value, s.fail(serialize_refusal_value_out_of_range)
     let umin = serialize_uint128_make(min.hi, min.lo)
     let umax = serialize_uint128_make(max.hi, max.lo)
     let uvalue = serialize_uint128_make(value.hi, value.lo)
@@ -202,7 +202,7 @@ def serialize_int128(s:serialize_read_stream, value:serialize_int128, min:serial
     // Reject, never clamp: the decoded offset must be at most the span
     // (STANDARD.md, int128; DESIGN.md (e)).
     if serialize_u128_compare(offset, span) > 0:
-        return value, s.fail()
+        return value, s.fail(serialize_refusal_value_out_of_range)
     let result = serialize_u128_add(umin, offset)
     return serialize_int128 { lo: result.lo, hi: result.hi }, true
 

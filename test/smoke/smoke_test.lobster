@@ -24,7 +24,6 @@ def smoke_every_name(s):
     var str = ""
     var u128 = serialize_uint128_make(0, 1)
     var i128 = serialize_int128_from_int64(-1)
-    var units = [0x48, 0x1F600]
     i, ok = s.serialize_bits(i, 3)
     i, ok = s.serialize_bits64(i, 40)
     var b = false
@@ -49,11 +48,12 @@ def smoke_every_name(s):
     i128, ok = s.serialize_fixed128(i128, 64, 64, -10, 10)
     str, ok = s.serialize_bytes(str, 0)
     str, ok = s.serialize_string(str, 64)
-    units, ok = s.serialize_wstring(units, 64)
     ok = s.serialize_object(smoke_object {})
+    ok = s.serialize_end()
     ok = s.ok()
     ok = s.error()
-    ok = s.fail()
+    let name = s.refusal_name()
+    ok = s.fail(serialize_refusal_past_end) or name == ""
     ok = s.is_writing()
     ok = s.is_reading()
     i = s.bits_processed()
@@ -91,7 +91,7 @@ def smoke_names():
 def TestSmoke():
     // The entry: the format version this port implements (STANDARD.md,
     // Format version).
-    assert serialize_format_version == "1.1"
+    assert serialize_format_version == "2.0"
 
     // Every name resolves (compiled and type checked, never run).
     if length(command_line_arguments()) > 1000000:
@@ -171,8 +171,23 @@ def TestSmoke():
     assert wr.bits_processed() == 0
     // fail() latches by hand, as serialize_write_fail and serialize_read_fail.
     let wf = serialize_write_stream(ensure_size("", 8, 0))
-    assert not wf.fail()
+    assert not wf.fail(serialize_refusal_value_out_of_range)
     assert wf.error()
+    assert wf.refusal_name() == "value_out_of_range"
+    // The first reason is kept; a later refusal is its echo.
+    assert not wf.fail(serialize_refusal_past_end)
+    assert wf.refusal_name() == "value_out_of_range"
+    // The closed list, spelled exactly as STANDARD.md, Refusal reasons.
+    assert serialize_refusal_name(serialize_refusal_none) == "none"
+    assert serialize_refusal_name(serialize_refusal_past_end) == "past_end"
+    assert serialize_refusal_name(serialize_refusal_value_out_of_range) == "value_out_of_range"
+    assert serialize_refusal_name(serialize_refusal_nonzero_padding) == "nonzero_padding"
+    assert serialize_refusal_name(serialize_refusal_trailing_data) == "trailing_data"
+    assert serialize_refusal_name(serialize_refusal_non_finite_float) == "non_finite_float"
+    assert serialize_refusal_name(serialize_refusal_invalid_utf8) == "invalid_utf8"
+    assert serialize_refusal_name(serialize_refusal_embedded_nul) == "embedded_nul"
+    assert serialize_refusal_name(serialize_refusal_non_canonical) == "non_canonical"
+    assert length(serialize_refusal_names) == 9
 
     // The number model helpers (DESIGN.md (c)).
     assert serialize_ult(1, -1)

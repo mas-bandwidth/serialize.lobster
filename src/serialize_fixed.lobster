@@ -9,7 +9,7 @@
 // This card lands without serialize-lobster-integers, so the unsigned 128-bit
 // pair arithmetic the wide path needs (DESIGN.md (c), "128 bits") lives here,
 // written over the { lo, hi } lanes the int128 family defines. The bytes are
-// serialize.c v1.11.2's.
+// serialize.c v2.0.0's.
 import .serialize_stream
 import .serialize_bitpacker
 import .serialize_int128
@@ -148,11 +148,11 @@ def serialize_fixed_write_core(s:serialize_write_stream, raw:serialize_int128, f
         return false
     if bits == 0:
         if raw.lo != raw_min.lo or raw.hi != raw_min.hi:
-            return s.fail()
+            return s.fail(serialize_refusal_value_out_of_range)
         return true
     let offset = serialize_fixed_sub128(raw, raw_min)
     if serialize_fixed_compare128(offset, span) > 0:
-        return s.fail()
+        return s.fail(serialize_refusal_value_out_of_range)
     if not s.write_gate(bits):
         return false
     serialize_fixed_write_u128(s, offset, bits)
@@ -166,15 +166,16 @@ def serialize_fixed_read_core(s:serialize_read_stream, fraction_bits:int, min:in
     let raw_max = serialize_fixed_raw_bound(max, fraction_bits)
     let span = serialize_fixed_sub128(raw_max, raw_min)
     let bits = serialize_fixed_bit_length128(span)
-    if s.failed:
-        return raw_min, false
+    // A degenerate field reads no bits and still consults the failure state:
+    // on a failed stream it is refused too (STANDARD.md, Reader Obligations,
+    // "Failure is terminal").
+    if bits == 0:
+        return raw_min, not s.failed
     if not s.read_gate(bits):
         return raw_min, false
-    if bits == 0:
-        return raw_min, true
     let offset = serialize_fixed_read_u128(s, bits)
     if serialize_fixed_compare128(offset, span) > 0:
-        return raw_min, s.fail()
+        return raw_min, s.fail(serialize_refusal_value_out_of_range)
     return serialize_fixed_add128(raw_min, offset), true
 
 // ---------------------------------------------------------------------------

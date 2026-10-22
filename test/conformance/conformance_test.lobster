@@ -3,18 +3,22 @@
 // (g) "Conformance").
 //
 // Discovers every conformance/*.txt at run time, never a fixed list, and runs
-// every record the way a runner must: an accepted read decodes the value (or
-// the bit pattern for `expect bits`) and consumes exactly `consumed` bits; a
-// `writer canonical` record's bytes are written byte for byte; a refused read
-// is refused, leaves its destination as it was, and leaves the stream
-// terminal; sequence steps run in order on one stream and `measure_at_least`
-// is a floor for the measure stream.
+// every record the way a runner must (STANDARD.md, "What a runner checks"): an
+// accepted read decodes the value (or the bit pattern for `expect bits`) and
+// consumes exactly `consumed` bits; a `writer canonical` record's bytes are
+// written byte for byte; a `writer_input` record's writer, handed that float32,
+// emits the record's bytes; a refused read is refused FOR ITS STATED REASON,
+// leaves its destination as it was, and leaves the stream terminal; sequence
+// steps run in order on one stream and `measure_at_least` is a floor for the
+// measure stream. Every stream is presented with eight bytes of NON-ZERO slack
+// behind it, so a decode that reads past the end cannot pass on zeros.
 //
-// Two controls (STANDARD.md, Provenance, "A gate nobody has seen go red"): a
-// corpus file whose operation has no runner is rejected, never skipped; and a
-// test-only sabotage switch, passed into the runner and never editing src/,
-// switches off the align-padding refusal rule and must go red on exactly the
-// vectors that pin it.
+// The controls (STANDARD.md, "A gate nobody has seen go red"): a corpus file
+// whose operation has no runner is rejected, never skipped (below); and, per
+// refusal rule, a reader with that one rule deleted must fail exactly the
+// vectors conformance-controls/<rule>.expected names. Those readers are
+// sabotaged copies of src/ staged by tools/controls.sh (make controls), which
+// drives conf_control below; src/ itself is never edited.
 import serialize
 
 var conf_soft = false
@@ -26,7 +30,6 @@ class cval:
     lo:int = 0
     hi:int = 0
     f:float = 0.0
-    ints:[int] = []
 
 class conf_rec:
     op:string = ""
@@ -47,9 +50,22 @@ class conf_rec:
     expect_text:string = ""
     expect_bits:bool = false
     refused:bool = false
+    reason:string = ""
+    has_writer_input:bool = false
+    writer_input:int = 0
+    malformed:string = ""
     consumed:int = -1
     measure_at_least:int = -1
     canonical:bool = false
+
+// The closed list of refusal reasons a vector may state (STANDARD.md, Refusal
+// reasons); "none" is the port's own spelling of no refusal and never a
+// vector's.
+def conf_known_reason(reason:string) -> bool:
+    for(serialize_refusal_names) name, i:
+        if i > 0 and name == reason:
+            return true
+    return false
 
 def conf_check(cond:bool, message:string) -> bool:
     if not cond and not conf_soft:
@@ -127,14 +143,14 @@ def conf_parse_float(text:string) -> float:
     return v
 
 def conf_bytes(text:string) -> [int]:
-    var out:[int] = []
+    let out:[int] = []
     for(tokenize(text, " ", "")) tok:
         if length(tok) > 0:
             out.push(conf_parse_u128("0x" + tok).lo)
     return out
 
 def conf_string_from_bytes(bytes:[int]) -> string:
-    var data = ensure_size("", length(bytes), 0)
+    let data = ensure_size("", length(bytes), 0)
     for(bytes) b, i:
         write_int8_le(data, i, b)
     return data
@@ -200,51 +216,13 @@ def conf_hex_bytes(data:string) -> string:
         out = out + conf_hex(read_uint8_le(data, i), 2)
     return out
 
-// The transmitted UTF-16 units, four hex digits each (STANDARD.md, wstring).
-def conf_wstring_text(value:[int]) -> string:
-    var out = ""
-    var first = true
-    for(value) c:
-        if c >= 0x10000:
-            let v = c - 0x10000
-            let hi = 0xD800 + serialize_shr(v, 10)
-            let lo = 0xDC00 + (v & 0x3FF)
-            if not first:
-                out = out + " "
-            out = out + conf_hex(hi, 4) + " " + conf_hex(lo, 4)
-            first = false
-        else:
-            if not first:
-                out = out + " "
-            out = out + conf_hex(c, 4)
-            first = false
-    return out
-
-def conf_wstring_codepoints(text:string) -> [int]:
-    var units:[int] = []
-    for(tokenize(text, " ", "")) tok:
-        if length(tok) > 0:
-            units.push(conf_parse_i64(tok))
-    var out:[int] = []
-    var i = 0
-    while i < length(units):
-        let c = units[i]
-        if c >= 0xD800 and c <= 0xDBFF and i + 1 < length(units):
-            let low = units[i + 1]
-            out.push(0x10000 + ((c - 0xD800) << 10) + (low - 0xDC00))
-            i += 2
-        else:
-            out.push(c)
-            i += 1
-    return out
-
 // ---------------------------------------------------------------------------
 // record parsing
 // ---------------------------------------------------------------------------
 
 def conf_parse_records(text:string) -> [conf_rec], int:
     let lines = tokenize(text, "\n", "")
-    var records:[conf_rec] = []
+    let records:[conf_rec] = []
     var current = conf_rec {}
     var have = false
     var operations = 0
@@ -297,8 +275,14 @@ def conf_parse_records(text:string) -> [conf_rec], int:
             current.bytes = conf_bytes(substring(line, 6, -1))
         elif length(line) >= 7 and substring(line, 0, 7) == "expect ":
             let expect = substring(line, 7, -1)
-            if expect == "refused":
+            if expect == "refused" or (length(expect) >= 8 and substring(expect, 0, 8) == "refused "):
+                // `expect refused <reason>`: a missing or unknown reason makes
+                // the vector malformed, which is red (STANDARD.md, Refusal
+                // reasons; "What a runner checks").
                 current.refused = true
+                current.reason = if length(expect) > 8: substring(expect, 8, -1) else: ""
+                if not conf_known_reason(current.reason):
+                    current.malformed = "expect refused with a missing or unknown reason: " + current.reason
             elif expect == "value =" or expect == "value = ":
                 current.expect_text = ""
             else:
@@ -311,8 +295,19 @@ def conf_parse_records(text:string) -> [conf_rec], int:
             current.consumed = conf_parse_int(substring(line, 9, -1))
         elif length(line) >= 17 and substring(line, 0, 17) == "measure_at_least ":
             current.measure_at_least = conf_parse_int(substring(line, 17, -1))
-        elif length(line) >= 16 and substring(line, 0, 16) == "writer canonical":
+        elif line == "writer canonical":
             current.canonical = true
+        elif length(line) >= 13 and substring(line, 0, 13) == "writer_input ":
+            // `writer_input bits = 0x...`: a float32 pattern a writer is handed.
+            let key, value = split_string(substring(line, 13, -1), " = ")
+            if key != "bits" or length(value) < 3 or substring(value, 0, 2) != "0x":
+                current.malformed = "writer_input is not `bits = 0x...`: " + line
+            current.has_writer_input = true
+            current.writer_input = conf_parse_u128(value).lo
+        else:
+            // A key this runner does not know is a record it cannot run: red,
+            // never skipped.
+            current.malformed = "unknown key: " + line
     if have:
         records.push(current)
     return records, operations
@@ -359,53 +354,7 @@ def conf_float_val(f:float, bits:int, width:int) -> cval:
     v.text = "0x" + conf_hex(bits, width)
     return v
 
-// ---------------------------------------------------------------------------
-// the sabotaged reader (STANDARD.md, Provenance, "A gate nobody has seen go
-// red"; DESIGN.md (g) "Conformance"). The switch lives in the test: these read
-// paths mirror serialize_align, serialize_bytes and serialize_string but skip
-// only the nonzero-padding refusal. src/ is never edited. Every other refusal
-// (past the end, a bad length, interior NUL, malformed UTF-8) still happens.
-// ---------------------------------------------------------------------------
-
-def conf_sab_align(r:serialize_read_stream) -> bool:
-    let n = r.align_bits()
-    if not r.read_gate(n):
-        return false
-    var padding = 0
-    if n > 0:
-        padding = r.unpack_bits(n)
-    return true
-
-def conf_sab_bytes(r:serialize_read_stream, data:string, count:int) -> string, bool:
-    if r.failed:
-        return data, false
-    let align = r.align_bits()
-    if not r.read_gate(align + count * 8):
-        return data, false
-    var padding = 0
-    if align > 0:
-        padding = r.unpack_bits(align)
-    if count > 0:
-        r.unpack_bytes(data, 0, count)
-    return data, true
-
-def conf_sab_string(r:serialize_read_stream, value:string, buffer_size:int) -> string, bool:
-    if r.failed:
-        return value, false
-    var n = 0
-    var ok = true
-    n, ok = r.serialize_int(n, 0, buffer_size - 1)
-    if not ok:
-        return value, false
-    var payload = ensure_size("", n, 0)
-    payload, ok = conf_sab_bytes(r, payload, n)
-    if not ok:
-        return value, false
-    if string_has_nul(payload, n) or not string_utf8_valid(payload, n):
-        return value, r.fail()
-    return payload, true
-
-def conf_step_read(r:serialize_read_stream, step:string, sabotage:string) -> cval, bool:
+def conf_step_read(r:serialize_read_stream, step:string) -> cval, bool:
     let toks = tokenize(step, " ", "")
     if length(toks) == 0:
         return conf_text_val(""), false
@@ -415,12 +364,9 @@ def conf_step_read(r:serialize_read_stream, step:string, sabotage:string) -> cva
             return conf_text_val("-"), false
         return conf_text_val("-"), true
     if op == "align":
-        var ok = true
-        if sabotage == "align-padding":
-            ok = conf_sab_align(r)
-        else:
-            ok = r.serialize_align()
-        return conf_text_val("-"), ok
+        return conf_text_val("-"), r.serialize_align()
+    if op == "end":
+        return conf_text_val("-"), r.serialize_end()
     if op == "bool":
         var b = true
         var ok = true
@@ -490,10 +436,7 @@ def conf_step_read(r:serialize_read_stream, step:string, sabotage:string) -> cva
         let sentinel = conf_string_from_bytes(conf_bytes("53 45 4E 54 49 4E 45 4C"))
         var data = sentinel
         var ok = true
-        if sabotage == "align-padding":
-            data, ok = conf_sab_bytes(r, data, count)
-        else:
-            data, ok = r.serialize_bytes(data, count)
+        data, ok = r.serialize_bytes(data, count)
         if ok and count < length(data):
             return conf_text_val(conf_hex_bytes(substring(data, 0, count))), ok
         return conf_text_val(conf_hex_bytes(data)), ok
@@ -501,19 +444,8 @@ def conf_step_read(r:serialize_read_stream, step:string, sabotage:string) -> cva
         let buffer_size = conf_parse_int(toks[1])
         var value = "SENTINEL"
         var ok = true
-        if sabotage == "align-padding":
-            value, ok = conf_sab_string(r, value, buffer_size)
-        else:
-            value, ok = r.serialize_string(value, buffer_size)
+        value, ok = r.serialize_string(value, buffer_size)
         return conf_text_val(conf_hex_bytes(value)), ok
-    if op == "wstring":
-        let buffer_size = conf_parse_int(toks[1])
-        var value:[int] = [7, 7, 7]
-        var ok = true
-        value, ok = r.serialize_wstring(value, buffer_size)
-        let v = conf_text_val(conf_wstring_text(value))
-        v.ints = value
-        return v, ok
     if op == "fixed":
         let ib = conf_parse_int(toks[1])
         let fb = conf_parse_int(toks[2])
@@ -534,7 +466,10 @@ def conf_step_read(r:serialize_read_stream, step:string, sabotage:string) -> cva
         var ok128 = true
         v128, ok128 = r.serialize_fixed128(v128, ib, fb, mn, mx)
         return conf_i128_val(v128), ok128
-    return conf_text_val(""), false
+    // A step this runner has no code for: red, never a refusal or a skip.
+    let unknown = conf_text_val("")
+    unknown.kind = -1
+    return unknown, false
 
 def conf_step_write(w, step:string, v:cval) -> bool:
     let toks = tokenize(step, " ", "")
@@ -545,6 +480,8 @@ def conf_step_write(w, step:string, v:cval) -> bool:
         return true
     if op == "align":
         return w.serialize_align()
+    if op == "end":
+        return w.serialize_end()
     if op == "bool":
         var b = v.i != 0
         var ok = true
@@ -621,12 +558,6 @@ def conf_step_write(w, step:string, v:cval) -> bool:
         var ok = true
         out, ok = w.serialize_string(out, buffer_size)
         return ok
-    if op == "wstring":
-        let buffer_size = conf_parse_int(toks[1])
-        var out = v.ints
-        var ok = true
-        out, ok = w.serialize_wstring(out, buffer_size)
-        return ok
     if op == "fixed":
         let ib = conf_parse_int(toks[1])
         let fb = conf_parse_int(toks[2])
@@ -650,11 +581,13 @@ def conf_step_write(w, step:string, v:cval) -> bool:
     return false
 
 def conf_single_steps(rec:conf_rec) -> [string]:
-    var steps:[string] = []
+    let steps:[string] = []
     if rec.has_preceding and conf_parse_int(rec.preceding_text) > 0:
         steps.push("bits " + rec.preceding_text)
     if rec.op == "align":
         steps.push("align")
+    elif rec.op == "end":
+        steps.push("end")
     elif rec.op == "bytes":
         steps.push("bytes " + rec.count_text)
     elif rec.op == "bits":
@@ -671,7 +604,7 @@ def conf_single_steps(rec:conf_rec) -> [string]:
         steps.push(rec.op)
     elif rec.op == "compressed_float":
         steps.push("compressed_float " + rec.min_text + " " + rec.max_text + " " + rec.res_text)
-    elif rec.op == "string" or rec.op == "wstring":
+    elif rec.op == "string":
         steps.push(rec.op + " " + rec.buffer_text)
     elif rec.op == "fixed":
         steps.push("fixed " + rec.integer_text + " " + rec.fraction_text + " " + rec.min_text + " " + rec.max_text)
@@ -717,7 +650,7 @@ def conf_sentinel(step:string) -> cval:
     if length(toks) == 0:
         return conf_text_val("")
     let op = toks[0]
-    if op == "align":
+    if op == "align" or op == "end":
         return conf_text_val("-")
     if op == "bool":
         let v = conf_int_val(1)
@@ -741,10 +674,6 @@ def conf_sentinel(step:string) -> cval:
         return conf_float_val(f, serialize_float32_bits(f), 8)
     if op == "bytes" or op == "string":
         return conf_text_val(conf_hex_bytes("SENTINEL"))
-    if op == "wstring":
-        let v = conf_text_val(conf_wstring_text([7, 7, 7]))
-        v.ints = [7, 7, 7]
-        return v
     if op == "fixed":
         let storage = conf_parse_int(toks[1]) + conf_parse_int(toks[2])
         if storage <= 32 or storage <= 64:
@@ -752,17 +681,56 @@ def conf_sentinel(step:string) -> cval:
         return conf_i128_val(serialize_int128_make(0x0BADF00D, 0x12345678))
     return conf_int_val(0)
 
-def conf_run_record(rec:conf_rec, sabotage:string, what:string) -> bool:
+// The stream with eight bytes of NON-ZERO slack behind it (STANDARD.md, "A
+// harness presents every stream with the slack its implementation's buffer
+// contract requires, filled with a non-zero pattern").
+def conf_read_stream(bytes:[int]) -> serialize_read_stream:
+    let n = length(bytes)
+    let data = ensure_size("", n + 8, 0)
+    for(bytes) b, i:
+        write_int8_le(data, i, b)
+    for(8) i:
+        write_int8_le(data, n + i, 0xA5)
+    return serialize_read_stream(data, n)
+
+// The writer_input leg (STANDARD.md, "What a runner checks"): a
+// compressed_float writer handed the record's float32 pattern must emit the
+// record's bytes exactly. It runs on refused vectors too: what a reader does
+// with the bytes does not change what a writer owes for the input.
+def conf_run_writer_input(rec:conf_rec, steps:[string], what:string) -> bool:
+    let last = length(steps) - 1
+    let toks = tokenize(steps[last], " ", "")
+    if not conf_check(length(toks) > 0 and toks[0] == "compressed_float", what + ": writer_input on a step that is not compressed_float"):
+        return false
+    let w = serialize_write_stream(ensure_size("", 8192, 0))
+    for(steps) step, i:
+        var v = conf_int_val(0)
+        if i == last:
+            v = conf_float_val(serialize_float32_from_bits(rec.writer_input), rec.writer_input, 8)
+        if not conf_step_write(w, step, v):
+            return conf_check(false, what + ": writer_input write refused at step " + string(i))
+    w.flush()
+    if w.bytes_processed() != length(rec.bytes):
+        return conf_check(false, what + ": writer_input byte count " + string(w.bytes_processed()) + " != " + string(length(rec.bytes)))
+    for(rec.bytes) b, i:
+        if read_uint8_le(w.buffer, i) != b:
+            return conf_check(false, what + ": writer_input byte " + string(i) + " is " + conf_hex(read_uint8_le(w.buffer, i), 2) + ", the corpus states " + conf_hex(b, 2))
+    return true
+
+def conf_run_record(rec:conf_rec, what:string) -> bool:
+    if rec.malformed != "":
+        return conf_check(false, what + ": malformed vector: " + rec.malformed)
     let steps = conf_steps(rec)
     if length(steps) == 0:
         return conf_check(false, what + ": unknown operation " + rec.op)
-    let data = conf_string_from_bytes(rec.bytes)
-    let r = serialize_read_stream_padded(data)
-    var vals:[cval] = []
+    if rec.has_writer_input and not conf_run_writer_input(rec, steps, what):
+        return false
+    let r = conf_read_stream(rec.bytes)
+    let vals:[cval] = []
     var failed_at = -1
     for(steps) step, i:
         let before = r.bits_processed()
-        var v, ok = conf_step_read(r, step, sabotage)
+        let v, ok = conf_step_read(r, step)
         if v.kind == -1:
             return conf_check(false, what + ": unknown step " + step)
         if failed_at >= 0:
@@ -779,6 +747,11 @@ def conf_run_record(rec:conf_rec, sabotage:string, what:string) -> bool:
             return conf_check(false, what + ": expected refusal, read accepted")
         if not r.error():
             return conf_check(false, what + ": refusal did not latch")
+        // The FIRST refusal's reason must be the one the vector states; a
+        // refusal for any other reason is a disagreement about the format
+        // (STANDARD.md, Refusal reasons).
+        if r.refusal_name() != rec.reason:
+            return conf_check(false, what + ": refused as " + r.refusal_name() + ", the vector states " + rec.reason)
         if not conf_val_equal(vals[failed_at], conf_sentinel(steps[failed_at])):
             return conf_check(false, what + ": refusal touched the destination")
         if failed_at == length(steps) - 1:
@@ -788,6 +761,8 @@ def conf_run_record(rec:conf_rec, sabotage:string, what:string) -> bool:
             v, ok = r.serialize_bits(v, 1)
             if ok or v != 0x12345678 or r.bits_processed() != before:
                 return conf_check(false, what + ": stream not terminal")
+            if r.refusal_name() != rec.reason:
+                return conf_check(false, what + ": a further read changed the reason to " + r.refusal_name())
         return true
 
     if failed_at >= 0:
@@ -795,7 +770,7 @@ def conf_run_record(rec:conf_rec, sabotage:string, what:string) -> bool:
     if r.bits_processed() != rec.consumed:
         return conf_check(false, what + ": read bits " + string(r.bits_processed()) + " != " + string(rec.consumed))
 
-    var tokens = tokenize(rec.expect_text, "|", "")
+    let tokens = tokenize(rec.expect_text, "|", "")
     if rec.op == "sequence":
         if length(tokens) != length(steps):
             return conf_check(false, what + ": expected " + string(length(tokens)) + " values for " + string(length(steps)) + " steps")
@@ -805,7 +780,11 @@ def conf_run_record(rec:conf_rec, sabotage:string, what:string) -> bool:
             if trimmed != "-" and not conf_step_value_ok(step, vals[i], trimmed):
                 return conf_check(false, what + ": step " + string(i) + " value " + vals[i].text + " != " + trimmed)
     else:
-        if rec.op != "align":
+        if rec.op == "align" or rec.op == "end":
+            // An operation with no value of its own states 0 alone.
+            if not conf_check(conf_trim(rec.expect_text) == "0", what + ": " + rec.op + " states value " + rec.expect_text + ", not 0"):
+                return false
+        else:
             let token = conf_trim(rec.expect_text)
             let last = length(steps) - 1
             if not conf_step_value_ok(steps[last], vals[last], token):
@@ -817,8 +796,11 @@ def conf_run_record(rec:conf_rec, sabotage:string, what:string) -> bool:
             if not conf_step_write(w, step, vals[i]):
                 return conf_check(false, what + ": canonical write refused at step " + string(i))
         w.flush()
-        if w.bits_processed() != rec.consumed:
-            return conf_check(false, what + ": canonical bits " + string(w.bits_processed()) + " != " + string(rec.consumed))
+        // A writer's end emits nothing, so a record ending in end consumed the
+        // final byte's padding on read: its writer's bits round up to it.
+        let written = if steps[length(steps) - 1] == "end": w.bytes_processed() * 8 else: w.bits_processed()
+        if written != rec.consumed:
+            return conf_check(false, what + ": canonical bits " + string(written) + " != " + string(rec.consumed))
         if w.bytes_processed() != length(rec.bytes):
             return conf_check(false, what + ": canonical byte count " + string(w.bytes_processed()) + " != " + string(length(rec.bytes)))
         for(rec.bytes) b, i:
@@ -843,18 +825,18 @@ def conf_trim(s:string) -> string:
         b -= 1
     return substring(s, a, b - a)
 
-def conf_run_file(path:string, sabotage:string) -> int, [string], int:
+def conf_run_file(path:string) -> int, [string], int:
     let maybe = read_file(path)
     if maybe == nil:
         return 1, [], 0
     let text = if maybe != nil: maybe else: ""
-    let records, operations = conf_parse_records(text)
-    if sabotage == "":
+    let records, _operations = conf_parse_records(text)
+    if not conf_soft:
         print "conformance: " + path + " " + string(length(records)) + " records"
     var bad = 0
-    var failed:[string] = []
+    let failed:[string] = []
     for(records) rec:
-        if not conf_run_record(rec, sabotage, path + " " + rec.name):
+        if not conf_run_record(rec, path + " " + rec.name):
             bad += 1
             failed.push(rec.name)
     return bad, failed, length(records)
@@ -865,87 +847,106 @@ def conf_name_in(names:[string], name:string) -> bool:
             return true
     return false
 
-def TestConformanceCorpus():
-    let names, sizes, times = scan_folder("conformance", true)
-    var files:[string] = []
+// Every conformance/*.txt, discovered at run time, never a fixed list.
+def conf_corpus_files() -> [string]:
+    let names, _sizes, _times = scan_folder("conformance", true)
+    let files:[string] = []
     if names:
         for(names) n:
             if length(n) >= 4 and substring(n, length(n) - 4, -1) == ".txt":
                 files.push("conformance/" + n)
+    return files
+
+// Runs the whole corpus softly and returns the names of the vectors that fail.
+def conf_corpus_failures(files:[string]) -> [string], int:
+    let red:[string] = []
+    var total = 0
+    conf_soft = true
+    for(files) path:
+        let _b, failed, count = conf_run_file(path)
+        total += count
+        for(failed) n:
+            red.push(n)
+    conf_soft = false
+    return red, total
+
+// The names a control's .expected file lists: every line that is neither blank
+// nor a # comment.
+def conf_expected_names(path:string) -> [string], bool:
+    let maybe = read_file(path)
+    if maybe == nil:
+        return [], false
+    let names:[string] = []
+    for(tokenize(if maybe != nil: maybe else: "", "\n", "")) line:
+        let t = conf_trim(line)
+        if length(t) > 0 and substring(t, 0, 1) != "#":
+            names.push(t)
+    return names, true
+
+// conf_control: the driver tools/controls.sh runs inside a staged copy of
+// src/ with ONE refusal rule deleted (STANDARD.md, "A gate nobody has seen go
+// red"). The sabotaged reader runs the real corpus, and its failures must be
+// EXACTLY conformance-controls/<control>.expected: a sabotage that breaks more
+// than its rule, or less, measures something other than what it claims. The
+// oracle is the reference's own list, never derived from the sabotage.
+def conf_control(control:string):
+    let files = conf_corpus_files()
+    if not conf_check(length(files) > 0, "control " + control + ": conformance/ has no .txt files"):
+        return
+    let expected, found = conf_expected_names("conformance-controls/" + control + ".expected")
+    if not conf_check(found and length(expected) > 0, "control " + control + ": conformance-controls/" + control + ".expected is missing or empty"):
+        return
+    let red, total = conf_corpus_failures(files)
+    var good = true
+    for(expected) name:
+        if not conf_name_in(red, name):
+            print "control " + control + ": the sabotaged reader did not fail " + name
+            good = false
+    for(red) name:
+        if not conf_name_in(expected, name):
+            print "control " + control + ": the sabotaged reader failed " + name + ", which is not in the .expected list"
+            good = false
+    if not conf_check(good, "control " + control + ": red on " + string(length(red)) + " of " + string(total) + " vectors, expected exactly " + string(length(expected))):
+        return
+    print "control " + control + ": red on exactly its " + string(length(expected)) + " expected vectors of " + string(total)
+
+def TestConformanceCorpus():
+    let files = conf_corpus_files()
     if not conf_check(length(files) > 0, "conformance/ has no .txt files"):
         return
     var bad = 0
     var total = 0
+    var refused = 0
+    let seen:[string] = []
     for(files) path:
-        let b, failed, count = conf_run_file(path, "")
+        let maybe = read_file(path)
+        let records, _ops = conf_parse_records(if maybe != nil: maybe else: "")
+        for(records) rec:
+            // Vector names are unique across the corpus (STANDARD.md, the
+            // vector format, `name`).
+            if not conf_check(not conf_name_in(seen, rec.name), "conformance: vector name " + rec.name + " is not unique"):
+                return
+            seen.push(rec.name)
+            if rec.refused:
+                refused += 1
+        let b, _failed, count = conf_run_file(path)
         bad += b
         total += count
         if b != 0:
             print "FAIL " + path + " " + string(b) + " bad record(s)"
-    print "conformance: " + string(length(files)) + " files, " + string(total) + " records"
+    print "conformance: " + string(length(files)) + " files, " + string(total) + " records, " + string(total - bad) + " pass, " + string(refused) + " refused for their stated reason"
     if not conf_check(bad == 0, "conformance corpus: " + string(bad) + " record(s) failed"):
         return
 
-    // Control 1 (STANDARD.md, Provenance): an operation with no runner is a
-    // REJECTED corpus, never a skip. The control is the reference's own
-    // negative control, conformance-controls/unknown-operation.txt, vendored
-    // verbatim from serialize v1.17.0 beside the corpus and never inside it.
+    // Control (STANDARD.md, "A runner discovers the directory"): an operation
+    // with no runner is a REJECTED corpus, never a skip. The control is the
+    // reference's own negative control, conformance-controls/unknown-operation.txt,
+    // vendored verbatim beside the corpus and never inside it.
     conf_soft = true
-    let ub, ufailed, ucount = conf_run_file("conformance-controls/unknown-operation.txt", "")
+    let ub, ufailed, ucount = conf_run_file("conformance-controls/unknown-operation.txt")
     conf_soft = false
     if not conf_check(ucount == 1, "control: conformance-controls/unknown-operation.txt did not parse to one record"):
         return
     if not conf_check(ub == 1 and length(ufailed) == 1, "control: unknown operation was not rejected"):
         return
     print "control: conformance-controls/unknown-operation.txt rejected as required"
-
-    // Control 2 (STANDARD.md, Provenance; STANDARD.md, align): the sabotaged
-    // reader above is run over the whole corpus with the nonzero-padding
-    // refusal switched off. It must go red on EXACTLY the refused vectors that
-    // pin align padding, including an align reached through a nested object
-    // (object.txt, object-refusal-propagates-out-of-the-nesting) and through a
-    // sequence. The oracle is this explicit list, read from the corpus by
-    // hand; it is not derived from the same predicate that drives the switch,
-    // so a checker that stops noticing the rule makes this control go red.
-    let padding_vectors:[string] = [
-        "align-refuse-one-non-zero-pad-bit",
-        "align-refuse-four-non-zero-pad-bits",
-        "align-refuse-seven-non-zero-pad-bits",
-        "align-refuse-only-the-highest-pad-bit-set",
-        "align-refuse-only-the-lowest-pad-bit-set",
-        "bytes-zero-count-refuse-non-zero-align-padding",
-        "bytes-refuse-non-zero-align-padding",
-        "string-refuse-non-zero-align-padding",
-        "sequence-refusal-is-terminal-after-bad-alignment",
-        "object-refusal-propagates-out-of-the-nesting"
-    ]
-    for(padding_vectors) name:
-        var found = false
-        var was_refused = false
-        for(files) path:
-            let maybe = read_file(path)
-            let text = if maybe != nil: maybe else: ""
-            let records, ops = conf_parse_records(text)
-            for(records) rec:
-                if rec.name == name:
-                    found = true
-                    was_refused = rec.refused
-        if not conf_check(found, "control: padding vector " + name + " is not in the corpus"):
-            return
-        if not conf_check(was_refused, "control: padding vector " + name + " is not refused"):
-            return
-    var red:[string] = []
-    conf_soft = true
-    for(files) path:
-        let b, failed, count = conf_run_file(path, "align-padding")
-        for(failed) n:
-            red.push(n)
-    conf_soft = false
-    if not conf_check(length(red) == length(padding_vectors), "control: sabotage red set has " + string(length(red)) + " names, expected " + string(length(padding_vectors))):
-        return
-    for(padding_vectors) name:
-        if not conf_check(conf_name_in(red, name), "control: sabotage did not go red on " + name):
-            return
-    for(red) name:
-        if not conf_check(conf_name_in(padding_vectors, name), "control: sabotage went red on unexpected " + name):
-            return
