@@ -111,7 +111,7 @@ def serialize_compressed_float(s:serialize_read_stream, value:float, min:float, 
     return decoded, ok
 
 def serialize_compressed_float(s:serialize_measure_stream, value:float, min:float, max:float, res:float):
-    let max_integer_value, bits, delta = serialize_compressed_float_params(min, max, res)
+    let _, bits, _delta = serialize_compressed_float_params(min, max, res)
     if s.failed:
         return value, false
     s.measure_bits(bits)

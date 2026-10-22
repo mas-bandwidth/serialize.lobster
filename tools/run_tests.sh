@@ -7,7 +7,7 @@
 # test/<name>/<x>_test.lobster; each `def Test<Name>():` at the start of a line
 # is one test. Each test runs in its own process, from build/run/<name>/, which
 # holds a copy of src/*.lobster, every .lobster file of test/<name>/, the
-# vendored conformance/ directory and one driver per test:
+# vendored conformance/ and conformance-controls/ directories and one driver per test:
 #
 #     import <x>_test
 #     Test<Name>()
@@ -82,6 +82,9 @@ for name in $names; do
     cp "$dir"/*.lobster "$run"/
     if [ -d "$root/conformance" ]; then
         cp -r "$root/conformance" "$run/conformance"
+    fi
+    if [ -d "$root/conformance-controls" ]; then
+        cp -r "$root/conformance-controls" "$run/conformance-controls"
     fi
 
     dir_failed=0

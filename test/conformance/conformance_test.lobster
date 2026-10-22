@@ -887,14 +887,17 @@ def TestConformanceCorpus():
         return
 
     // Control 1 (STANDARD.md, Provenance): an operation with no runner is a
-    // REJECTED corpus, never a skip. The scratch file is a copy of the real
-    // record shape with an operation no runner has.
-    write_file("conformance/_control_unknown.txt", "operation no_such_operation\nname control-unknown\nbytes\nexpect refused\n")
+    // REJECTED corpus, never a skip. The control is the reference's own
+    // negative control, conformance-controls/unknown-operation.txt, vendored
+    // verbatim from serialize v1.17.0 beside the corpus and never inside it.
     conf_soft = true
-    let ub, ufailed, ucount = conf_run_file("conformance/_control_unknown.txt", "")
+    let ub, ufailed, ucount = conf_run_file("conformance-controls/unknown-operation.txt", "")
     conf_soft = false
-    if not conf_check(ub == 1 and ucount == 1, "control: unknown operation was not rejected"):
+    if not conf_check(ucount == 1, "control: conformance-controls/unknown-operation.txt did not parse to one record"):
         return
+    if not conf_check(ub == 1 and length(ufailed) == 1, "control: unknown operation was not rejected"):
+        return
+    print "control: conformance-controls/unknown-operation.txt rejected as required"
 
     // Control 2 (STANDARD.md, Provenance; STANDARD.md, align): the sabotaged
     // reader above is run over the whole corpus with the nonzero-padding

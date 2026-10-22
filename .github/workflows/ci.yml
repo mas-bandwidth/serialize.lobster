@@ -54,4 +54,5 @@ jobs:
       - name: The vendored corpus and standard are the pin's
         run: |
           diff -ru "$RUNNER_TEMP/serialize/conformance" conformance
+          diff -ru "$RUNNER_TEMP/serialize/conformance-controls" conformance-controls
           diff -ru "$RUNNER_TEMP/serialize/STANDARD.md" STANDARD.md
