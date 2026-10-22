@@ -9,6 +9,9 @@ on:
 jobs:
   test:
     name: test on the pinned Lobster
+    # THE FORK GUARD: this repository is PUBLIC and these are its own fleet runners, so a
+    # pull request from a fork never reaches them (tools/checkci/check-ci.sh holds every job to it).
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, Linux, X64, fleet, serialize]
     steps:
       - uses: actions/checkout@v4
@@ -22,6 +25,9 @@ jobs:
       - name: Test
         run: make test
 
+      - name: ROADMAP.md is what docs/roadmap.sexp renders
+        run: PATH="$HOME/.local/bin:$PATH" make roadmap-check
+
       - name: Fuzz
         run: if [ -f make/fuzz.mk ]; then make fuzz; fi
 
@@ -30,6 +36,9 @@ jobs:
 
   corpus:
     name: STANDARD.md and conformance/ match the corpus pin
+    # THE FORK GUARD: this repository is PUBLIC and these are its own fleet runners, so a
+    # pull request from a fork never reaches them (tools/checkci/check-ci.sh holds every job to it).
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, Linux, X64, fleet, serialize]
     env:
       SERIALIZE_TAG: v1.17.0

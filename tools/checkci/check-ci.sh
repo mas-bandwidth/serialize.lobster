@@ -8,7 +8,7 @@
 # Makefile), when the workflow does not run `make dist-lobster` and `make test`,
 # or when its corpus tag differs from DESIGN.md's pin. Its own controls are
 # scratch copies of ci.yml with `runs-on: ubuntu-latest` and with a pasted
-# sha256: both copies must fail this check, or TestCheckCI fails.
+# sha256 and without the fork guard: every copy must fail this check, or TestCheckCI fails.
 set -u
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
@@ -74,6 +74,14 @@ EOF_RUNS_ON
 $(scan_pin "$target_ci")
 EOF_PIN
 
+	# THE FORK GUARD: every job carries the same-repository `if:` (the repository
+	# is public and its runners are the fleet's), so a fork's pull request never
+	# reaches them.
+	guard_count=$(grep -cE "^[[:space:]]*if:[[:space:]]*github\.event_name != 'pull_request' \|\| github\.event\.pull_request\.head\.repo\.full_name == github\.repository[[:space:]]*$" "$target_ci" || true)
+	if [ "$guard_count" -ne "$runs_on_count" ]; then
+		fail "$target_ci:1: $runs_on_count job(s) but $guard_count fork guard(s); every job needs the same-repository if:"
+	fi
+
 	for target in dist-lobster test; do
 		runs_make "$target_ci" "$target" || fail "$target_ci:1: ci.yml does not run 'make $target'"
 	done
@@ -118,6 +126,14 @@ if [ $# -eq 0 ] && [ "$bad" -eq 0 ]; then
 		else
 			printf 'control: scratch ci.yml with a pasted sha256 failed as required:\n'
 			sed 's/^/  /' "$ctl/pin.out"
+		fi
+
+		grep -v "head.repo.full_name == github.repository" "$ci" >"$ctl/ci-fork.yml"
+		if sh "$0" "$ctl/ci-fork.yml" >"$ctl/fork.out" 2>&1; then
+			fail "control: a scratch ci.yml without the fork guard passed; it must fail"
+		else
+			printf 'control: scratch ci.yml without the fork guard failed as required:\n'
+			sed 's/^/  /' "$ctl/fork.out"
 		fi
 
 		rm -rf "$ctl"
