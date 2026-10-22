@@ -1,9 +1,9 @@
 // test/strings/strings_test.lobster — TestSerializeStrings (STANDARD.md, Bytes
-// and Strings: bytes, string, wstring; align; object; Reader Obligations;
-// DESIGN.md (d), (e), (f)).
+// and Strings: bytes, string; align; object; Reader Obligations; DESIGN.md
+// (d), (e), (f)).
 //
-// Every record of conformance/bytes.txt, string.txt, wstring.txt, align.txt and
-// object.txt runs as a runner must: the reader's value and bits consumed, the
+// Every record of conformance/bytes.txt, string.txt, align.txt and object.txt
+// runs as a runner must: the reader's value and bits consumed, the
 // canonical writer's exact bytes and bits, the measure count, and for a refusal
 // a terminal stream. The record count printed per file must equal the file's
 // own count of operation lines.
@@ -19,6 +19,7 @@ struct strings_record:
     bytes:[int] = []
     expect:[string] = []
     refused:bool = false
+    reason:string = ""
     consumed:int = 0
     canonical:bool = false
     measure_at_least:int = -1
@@ -34,7 +35,7 @@ def strings_parse_int(text:string) -> int:
     return value
 
 def strings_byte_list(text:string) -> [int]:
-    var out:[int] = []
+    let out:[int] = []
     for(tokenize(text, " ", "")) tok:
         if length(tok) > 0:
             let b, ok = string_to_int(tok, 16)
@@ -50,28 +51,6 @@ def strings_bytes_string(bytes:[int]) -> string:
 
 def strings_hex_string(text:string) -> string:
     return strings_bytes_string(strings_byte_list(text))
-
-def strings_codepoints(units:[int]) -> [int]:
-    var out:[int] = []
-    var i = 0
-    while i < length(units):
-        let u = units[i]
-        if u >= 0xD800 and u <= 0xDBFF and i + 1 < length(units) and units[i + 1] >= 0xDC00 and units[i + 1] <= 0xDFFF:
-            out.push(0x10000 + ((u - 0xD800) << 10) + (units[i + 1] - 0xDC00))
-            i += 2
-        else:
-            out.push(u)
-            i += 1
-    return out
-
-def strings_units(text:string) -> [int]:
-    var out:[int] = []
-    for(tokenize(text, " ", "")) tok:
-        if length(tok) > 0:
-            let u, ok = string_to_int(tok, 16)
-            strings_check(ok and u >= 0 and u <= 0xFFFFFFFF, "bad unit " + tok)
-            out.push(u)
-    return out
 
 def strings_hex_digit(b:int) -> string:
     let digits = "0123456789ABCDEF"
@@ -90,7 +69,7 @@ def strings_bytes_hex(data:string) -> string:
 
 def strings_parse_records(text:string) -> [strings_record], int:
     let lines = tokenize(text, "\n", "")
-    var records:[strings_record] = []
+    let records:[strings_record] = []
     var current = strings_record {}
     var have = false
     var operations = 0
@@ -128,8 +107,9 @@ def strings_parse_records(text:string) -> [strings_record], int:
             current.bytes = strings_byte_list(substring(line, 6, -1))
         elif length(line) >= 7 and substring(line, 0, 7) == "expect ":
             let e = substring(line, 7, -1)
-            if e == "refused":
+            if length(e) > 8 and substring(e, 0, 8) == "refused ":
                 current.refused = true
+                current.reason = substring(e, 8, -1)
             elif e == "value =":
                 current.expect = [""]
             elif length(e) >= 8 and substring(e, 0, 8) == "value = ":
@@ -188,6 +168,7 @@ def strings_run_bytes(rec:strings_record, what:string):
     if rec.refused:
         strings_check(not ok, what + ": expected refusal")
         strings_check(r.error(), what + ": refusal did not latch")
+        strings_check(r.refusal_name() == rec.reason, what + ": refused as " + r.refusal_name() + ", the vector states " + rec.reason)
         let before = r.bits_processed()
         var d2 = ensure_size("", 1, 0)
         d2, ok = r.serialize_bytes(d2, 0)
@@ -217,6 +198,7 @@ def strings_run_string(rec:strings_record, what:string):
     if rec.refused:
         strings_check(not ok, what + ": expected refusal")
         strings_check(r.error(), what + ": refusal did not latch")
+        strings_check(r.refusal_name() == rec.reason, what + ": refused as " + r.refusal_name() + ", the vector states " + rec.reason)
         strings_check(got == "", what + ": refusal touched the destination")
         let before = r.bits_processed()
         got, ok = r.serialize_string(got, rec.buffer_size)
@@ -233,33 +215,6 @@ def strings_run_string(rec:strings_record, what:string):
         strings_check(wok, what + ": write refused")
         strings_canonical(w, rec, what)
 
-def strings_run_wstring(rec:strings_record, what:string):
-    let r = serialize_read_stream_padded(strings_bytes_string(rec.bytes))
-    var got:[int] = []
-    var ok = true
-    got, ok = r.serialize_wstring(got, rec.buffer_size)
-    if rec.refused:
-        strings_check(not ok, what + ": expected refusal")
-        strings_check(r.error(), what + ": refusal did not latch")
-        strings_check(length(got) == 0, what + ": refusal touched the destination")
-        let before = r.bits_processed()
-        got, ok = r.serialize_wstring(got, rec.buffer_size)
-        strings_check(not ok and length(got) == 0 and r.bits_processed() == before, what + ": stream not terminal")
-        return
-    strings_check(ok, what + ": read refused")
-    strings_check(r.bits_processed() == rec.consumed, what + ": read bits")
-    let expected = strings_codepoints(strings_units(rec.expect[0]))
-    strings_check(length(got) == length(expected), what + ": read value length")
-    for(got) u, i:
-        strings_check(u == expected[i], what + ": read unit " + string(i))
-    if rec.canonical:
-        let w = serialize_write_stream(ensure_size("", 256, 0))
-        var wv = got
-        var wok = true
-        wv, wok = w.serialize_wstring(got, rec.buffer_size)
-        strings_check(wok, what + ": write refused")
-        strings_canonical(w, rec, what)
-
 def strings_run_align(rec:strings_record, what:string):
     let r = serialize_read_stream_padded(strings_bytes_string(rec.bytes))
     var pre = 0
@@ -270,6 +225,7 @@ def strings_run_align(rec:strings_record, what:string):
     if rec.refused:
         strings_check(not aok, what + ": expected refusal")
         strings_check(r.error(), what + ": refusal did not latch")
+        strings_check(r.refusal_name() == rec.reason, what + ": refused as " + r.refusal_name() + ", the vector states " + rec.reason)
         let before = r.bits_processed()
         strings_check(not r.serialize_align() and r.bits_processed() == before, what + ": stream not terminal")
         return
@@ -402,12 +358,13 @@ def serialize(o::string_seq_object, s) -> bool:
 
 def strings_run_sequence(rec:strings_record, what:string):
     let r = serialize_read_stream_padded(strings_bytes_string(rec.bytes))
-    var values:[string] = []
+    let values:[string] = []
     let root = string_seq_object { rec: rec, pos: 0, count: strings_top_count(rec.steps), values: values }
     let ok = r.serialize_object(root)
     if rec.refused:
         strings_check(not ok, what + ": expected refusal")
         strings_check(r.error(), what + ": refusal did not latch")
+        strings_check(r.refusal_name() == rec.reason, what + ": refused as " + r.refusal_name() + ", the vector states " + rec.reason)
         return
     strings_check(ok, what + ": read refused")
     strings_check(r.bits_processed() == rec.consumed, what + ": read bits")
@@ -442,8 +399,6 @@ def strings_run_file(name:string):
             strings_run_bytes(rec, what)
         elif rec.op == "string":
             strings_run_string(rec, what)
-        elif rec.op == "wstring":
-            strings_run_wstring(rec, what)
         elif rec.op == "align":
             strings_run_align(rec, what)
         elif rec.op == "sequence":
@@ -456,24 +411,15 @@ def strings_run_file(name:string):
 // nothing, mirroring the reader; it never aborts (DESIGN.md (e)).
 // ---------------------------------------------------------------------------
 
-def strings_expect_write_latch_string(value:string, buffer_size:int, what:string):
+def strings_expect_write_latch_string(value:string, buffer_size:int, reason:string, what:string):
     let w = serialize_write_stream(ensure_size("", 8, 0))
     var v = value
     var ok = true
     v, ok = w.serialize_string(v, buffer_size)
     strings_check(not ok and w.error(), what + ": expected latch")
+    strings_check(w.refusal_name() == reason, what + ": latched " + w.refusal_name() + ", not " + reason)
     strings_check(w.bits_processed() == 0, what + ": wrote bits")
     v, ok = w.serialize_string(value, buffer_size)
-    strings_check(not ok and v == value and w.bits_processed() == 0, what + ": stream not terminal")
-
-def strings_expect_write_latch_wstring(value:[int], buffer_size:int, what:string):
-    let w = serialize_write_stream(ensure_size("", 8, 0))
-    var v = value
-    var ok = true
-    v, ok = w.serialize_wstring(v, buffer_size)
-    strings_check(not ok and w.error(), what + ": expected latch")
-    strings_check(w.bits_processed() == 0, what + ": wrote bits")
-    v, ok = w.serialize_wstring(value, buffer_size)
     strings_check(not ok and v == value and w.bits_processed() == 0, what + ": stream not terminal")
 
 def strings_write_refusals():
@@ -481,61 +427,47 @@ def strings_write_refusals():
     write_int8_le(with_nul, 0, 0x61)
     write_int8_le(with_nul, 1, 0)
     write_int8_le(with_nul, 2, 0x62)
-    strings_expect_write_latch_string(with_nul, 16, "string interior NUL")
+    strings_expect_write_latch_string(with_nul, 16, "embedded_nul", "string interior NUL")
 
     let overlong = ensure_size("", 2, 0)
     write_int8_le(overlong, 0, 0xC0)
     write_int8_le(overlong, 1, 0x80)
-    strings_expect_write_latch_string(overlong, 16, "string overlong UTF-8")
+    strings_expect_write_latch_string(overlong, 16, "invalid_utf8", "string overlong UTF-8")
+
+    // A NUL and bad UTF-8 together: the NUL rule first, as on read.
+    let both = ensure_size("", 2, 0)
+    write_int8_le(both, 0, 0xFF)
+    write_int8_le(both, 1, 0)
+    strings_expect_write_latch_string(both, 16, "embedded_nul", "string NUL after a byte that is never UTF-8")
 
     let too_long = ensure_size("", 4, 0x41)
-    strings_expect_write_latch_string(too_long, 4, "string past buffer_size")
+    strings_expect_write_latch_string(too_long, 4, "value_out_of_range", "string past buffer_size")
 
-    strings_expect_write_latch_wstring([0x110000], 8, "wstring above U+10FFFF")
-    strings_expect_write_latch_wstring([0xD800], 8, "wstring high surrogate")
-    strings_expect_write_latch_wstring([0xDC00], 8, "wstring low surrogate")
-    strings_expect_write_latch_wstring([0x41, 0, 0x42], 8, "wstring interior NUL")
-    strings_expect_write_latch_wstring([0x41, 0x42, 0x43, 0x44], 4, "wstring past buffer_size")
-
-// serialize.c's test/fuzz-corpus utf16 cases (payload after the 32-byte op
-// program): each malformed unit sequence is refused by the same wstring reader.
-def strings_fuzz_corpus_utf16():
-    let names = [
-        "utf16_above_ffff",
-        "utf16_lone_low",
-        "utf16_trailing_high",
-        "utf16_unpaired_high",
-        "utf16_zero_unit",
-        "utf16_valid_fence",
-    ]
-    let payloads = [
-        "01 00 40 04 00",
-        "01 80 37 00 00",
-        "42 10 00 00 40 0f 36 00 00",
-        "42 0f 36 00 40 10 00 00 00",
-        "43 10 00 00 00 00 00 00 80 10 00 00 00",
-        "c5 ff 35 00 00 00 38 00 c0 ff 3f 00 40 0f 36 00 00 80 37 00 00",
-    ]
-    let refusals = [true, true, true, true, true, false]
-    for(names) name, i:
-        let r = serialize_read_stream_padded(strings_hex_string(payloads[i]))
-        var v:[int] = []
-        var ok = true
-        v, ok = r.serialize_wstring(v, 64)
-        if refusals[i]:
-            strings_check(not ok and r.error(), "fuzz-corpus " + name + ": expected refusal")
-        else:
-            strings_check(ok and not r.error(), "fuzz-corpus " + name + ": expected accept")
-    print "test/strings: fuzz-corpus utf16 cases " + string(length(names))
+// A string read holds the claimed length against the bytes that remain BEFORE
+// it allocates the payload (PORT-BRIEF 2026-10-22, allocate-before-check): a
+// 4-byte stream under a buffer_size of 2^31 that claims 2^31 - 1 bytes is
+// refused as past_end with its destination untouched, and nothing of the
+// claimed size is allocated. The same holds for a stream whose padding is set:
+// nonzero_padding comes first.
+def strings_claimed_length_before_allocation():
+    let buffer_size = 2147483647
+    let r = serialize_read_stream_padded(strings_hex_string("fe ff ff 7f"))
+    var v = "SENTINEL"
+    var ok = true
+    v, ok = r.serialize_string(v, buffer_size)
+    strings_check(not ok and v == "SENTINEL" and r.refusal_name() == "past_end", "huge claimed length: refused as " + r.refusal_name())
+    let p = serialize_read_stream_padded(strings_hex_string("fe ff ff ff 01"))
+    v, ok = p.serialize_string(v, buffer_size)
+    strings_check(not ok and v == "SENTINEL" and p.refusal_name() == "nonzero_padding", "huge claimed length after set padding: refused as " + p.refusal_name())
+    print "test/strings: a claimed length past the stream is refused before any allocation"
 
 def TestSerializeStrings():
     strings_run_file("bytes")
     strings_run_file("string")
-    strings_run_file("wstring")
     strings_run_file("align")
     strings_run_file("object")
     strings_write_refusals()
-    strings_fuzz_corpus_utf16()
+    strings_claimed_length_before_allocation()
 
 // The API misuse serialize.c asserts on (DESIGN.md (e), ABORT).
 // expect-abort: serialize: buffer_size must be at least 1

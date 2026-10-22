@@ -374,7 +374,7 @@ def test_bits_required():
     assert serialize_bits_required64(0x8000000000000000, 0x7FFFFFFFFFFFFFFF) == 64
 
 // Rowan's mandatory check: feed VALID data with plenty of remaining bits after
-// a forced read error (both via r.fail() and via a data-triggered refusal in
+// a forced read error (both via r.fail(reason) and via a data-triggered refusal in
 // byte 0) and prove every subsequent read stays refused, leaves its destination
 // untouched, and consumes 0 bits. Removing the latch guard in read_gate turns
 // this test red because bits_read + bits <= num_bits holds over the remaining
@@ -385,10 +385,10 @@ def test_read_latch_over_valid_data():
     for(15) i:
         write_int8_le(valid_data, i + 1, (i + 1) * 0x11)
 
-    // Case 1: explicit r.fail() when 128 valid bits remain.
+    // Case 1: explicit r.fail(reason) when 128 valid bits remain.
     let r1 = serialize_read_stream(valid_data, 16)
     assert r1.bits_remaining() == 128
-    assert not r1.fail()
+    assert not r1.fail(serialize_refusal_value_out_of_range)
     assert r1.error() and not r1.ok()
     assert r1.bits_remaining() == 128
 

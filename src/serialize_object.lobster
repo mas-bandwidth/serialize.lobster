@@ -15,12 +15,15 @@ abstract class serialize_object_base:
 // Invokes the object's own serialize function inline; it contributes no bytes
 // of its own (STANDARD.md, object). A latched stream refuses before the object
 // runs; a false return latches and leaves the stream terminal (DESIGN.md (a)).
+// A refusal inside the object keeps its own reason (the first one latched);
+// an object that returns false on its own, with no stream refusal, rejected a
+// decoded value of its own, and latches value_out_of_range.
 def serialize_object(s:serialize_write_stream, object:serialize_object_base) -> bool:
     if s.failed:
         return false
     let ok = object.serialize(s)
     if not ok:
-        return s.fail()
+        return s.fail(serialize_refusal_value_out_of_range)
     return s.ok()
 
 def serialize_object(s:serialize_read_stream, object:serialize_object_base) -> bool:
@@ -28,7 +31,7 @@ def serialize_object(s:serialize_read_stream, object:serialize_object_base) -> b
         return false
     let ok = object.serialize(s)
     if not ok:
-        return s.fail()
+        return s.fail(serialize_refusal_value_out_of_range)
     return s.ok()
 
 def serialize_object(s:serialize_measure_stream, object:serialize_object_base) -> bool:
@@ -36,5 +39,5 @@ def serialize_object(s:serialize_measure_stream, object:serialize_object_base) -
         return false
     let ok = object.serialize(s)
     if not ok:
-        return s.fail()
+        return s.fail(serialize_refusal_value_out_of_range)
     return s.ok()

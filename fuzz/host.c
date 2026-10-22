@@ -1,15 +1,21 @@
 /*
     fuzz/host.c -- TestDifferentialAgainstSerializeC.
 
-    A fixed-seed generator writes 2000 random programs.  serialize.c v1.11.2
-    (the oracle, compiled from .ref/serialize.c) writes and reads each one, and
+    A fixed-seed generator writes 2000 random programs.  serialize.c v2.0.0
+    (the oracle, compiled from .ref/serialize.c-v2.0.0) writes and reads each one, and
     the Lobster port is driven as a child process over files in this test's own
-    temporary directory, one process per batch of 100 programs.
+    temporary directory, one process per batch of 100 programs.  Every
+    program ends with an end (STANDARD.md, end), and every float and double it
+    writes is finite (STANDARD.md, "Finite values only").
 
     For every program the two writers' bytes must be equal; each side reads the
     other's bytes and every decoded value (floats by bit pattern) must match;
     one in four programs is mutated and both readers must agree on accept or
-    refuse, on the refusing step, and on every value decoded before it.
+    refuse, on the refusing step, on the refusal REASON (STANDARD.md, Refusal
+    reasons), and on every value decoded before it.  A mutant appending bytes
+    reaches the end's trailing_data; targeted mutants write a ranged offset one
+    past its span, an all-ones exponent into a float or double field, or a
+    zero or 0xFF byte into a string payload.
 
     --negative-control makes the C side write one int range one bit wider,
     which must make the comparison red (the make target proves it does).
@@ -38,7 +44,8 @@ enum {
     OP_BITS, OP_BITS64, OP_BOOL, OP_U8, OP_U16, OP_U32, OP_U64,
     OP_INT, OP_INT64, OP_INT_REL, OP_U128, OP_I128, OP_FLOAT, OP_DOUBLE,
     OP_FIXED32, OP_FIXED64, OP_FIXED128, OP_CFLOAT, OP_CFLOAT_PRE,
-    OP_BYTES, OP_STRING, OP_WSTRING, OP_ALIGN, OP_OBJECT, OP_KINDS
+    OP_BYTES, OP_STRING, OP_ALIGN, OP_OBJECT, OP_KINDS,
+    OP_END = OP_KINDS
 };
 
 typedef struct {
@@ -51,15 +58,14 @@ typedef struct {
     uint32_t cmax;
     int cbits;
     float cdelta;
-    int len, bufsize, ncp;
+    int len, bufsize;
     unsigned char buf[64];
-    int32_t cp[32];
 } Op;
 
 typedef struct {
     int id;
     int nops;
-    Op ops[MAXOPS];
+    Op ops[MAXOPS + 1];
     unsigned char bytes[BUFCAP];
     int nbytes;
     unsigned char mutant[BUFCAP + 8];
@@ -70,10 +76,10 @@ typedef struct {
        refuses (STANDARD.md, int; DESIGN.md (c)).  The targeted mutant writes
        that offset so the mutant leg reaches the range refusal itself. */
     int nranged;
-    int rkind[MAXOPS];
-    int rstart[MAXOPS];
-    int rwidth[MAXOPS];
-    uint64_t rtarget[MAXOPS];
+    int rkind[MAXOPS + 1];
+    int rstart[MAXOPS + 1];
+    int rwidth[MAXOPS + 1];
+    uint64_t rtarget[MAXOPS + 1];
 } Program;
 
 /* ---------------------------------------------------------------- RNG --- */
@@ -165,14 +171,18 @@ static void gen_op(Op *o) {
         break;
     }
     case OP_FLOAT: {
+        /* finite patterns only: a writer is handed finite values, and
+           serialize.c asserts it.  Random bits whose exponent is all ones
+           have its top bit cleared. */
         int c = (int)rnd(6);
         uint32_t b;
         if (c == 0) b = (uint32_t)rng_next();
-        else if (c == 1) b = 0x7fc00000u + (uint32_t)rnd(4);
-        else if (c == 2) b = 0xffc00000u + (uint32_t)rnd(4);
-        else if (c == 3) b = 0x7f800000u;
+        else if (c == 1) b = (uint32_t)rng_next() & 0x807FFFFFu;
+        else if (c == 2) b = 0x7f7fffffu - (uint32_t)rnd(4);
+        else if (c == 3) b = 0xff7fffffu - (uint32_t)rnd(4);
         else if (c == 4) b = 0x80000000u;
         else b = f32_bits((float)rng_next() / (float)UINT32_MAX * 100.0f - 50.0f);
+        if ((b & 0x7f800000u) == 0x7f800000u) b ^= 0x40000000u;
         o->u = b;
         break;
     }
@@ -180,10 +190,11 @@ static void gen_op(Op *o) {
         int c = (int)rnd(5);
         uint64_t b;
         if (c == 0) b = rng_next();
-        else if (c == 1) b = 0x7ff8000000000000ULL + (rng_next() & 0xFFFFFFFFULL);
-        else if (c == 2) b = 0xfff8000000000000ULL + (rng_next() & 0xFFFFFFFFULL);
-        else if (c == 3) b = 0x7ff0000000000000ULL;
+        else if (c == 1) b = rng_next() & 0x800FFFFFFFFFFFFFULL;
+        else if (c == 2) b = 0x7fefffffffffffffULL - (rng_next() & 0xFFFFFFFFULL);
+        else if (c == 3) b = 0x8000000000000000ULL;
         else b = (uint64_t)rng_next();
+        if ((b & 0x7ff0000000000000ULL) == 0x7ff0000000000000ULL) b ^= 0x4000000000000000ULL;
         o->u = b;
         break;
     }
@@ -239,16 +250,6 @@ static void gen_op(Op *o) {
         o->len = (int)rnd(21);
         for (int i = 0; i < o->len; i++) o->buf[i] = (unsigned char)('A' + rnd(26));
         break;
-    case OP_WSTRING: {
-        int n = (int)rnd(13);
-        o->bufsize = 64;
-        o->ncp = 0;
-        for (int i = 0; i < n; i++) {
-            int32_t c = rnd(5) == 0 ? (int32_t)(0x1F600 + rnd(64)) : (int32_t)('A' + rnd(26));
-            o->cp[o->ncp++] = c;
-        }
-        break;
-    }
     case OP_ALIGN: break;
     case OP_OBJECT: break;
     }
@@ -257,8 +258,12 @@ static void gen_op(Op *o) {
 static void gen_program(Program *p, int id) {
     memset(p, 0, sizeof(*p));
     p->id = id;
-    p->nops = 1 + (int)rnd(MAXOPS);
+    p->nops = 1 + (int)rnd(MAXOPS - 1);
     for (int i = 0; i < p->nops; i++) gen_op(&p->ops[i]);
+    /* a packet is one object and its end (STANDARD.md, Compatibility Notes) */
+    memset(&p->ops[p->nops], 0, sizeof(Op));
+    p->ops[p->nops].kind = OP_END;
+    p->nops++;
     p->has_mutant = (rnd(4) == 0);
 }
 
@@ -282,6 +287,19 @@ static void record_ranged(Program *p, int kind, uint64_t span, int64_t bstart) {
     p->rstart[p->nranged] = (int)bstart;
     p->rwidth[p->nranged] = bits;
     p->rtarget[p->nranged] = span + 1;
+    p->nranged++;
+}
+
+/* Record a field a targeted mutant rewrites to a value every reader refuses:
+   a float or double exponent set all ones (non_finite_float, STANDARD.md,
+   "Finite values only"), or a string payload byte set to 0x00 (embedded_nul)
+   or 0xFF (invalid_utf8, STANDARD.md, string). */
+static void record_field(Program *p, int kind, int64_t bstart, int width, uint64_t target) {
+    if (p->nranged >= MAXOPS) return;
+    p->rkind[p->nranged] = kind;
+    p->rstart[p->nranged] = (int)bstart;
+    p->rwidth[p->nranged] = width;
+    p->rtarget[p->nranged] = target;
     p->nranged++;
 }
 
@@ -334,15 +352,8 @@ static int write_program(Program *p, unsigned char *buf, int cap, int widen, int
         case OP_CFLOAT_PRE: serialize_write_compressed_float_precomputed(&w, o->f4, o->cmax, o->cbits, o->cdelta, o->f1); break;
         case OP_BYTES: serialize_write_bytes(&w, o->buf, o->len); break;
         case OP_STRING: serialize_write_string(&w, (const char *)o->buf, o->bufsize); break;
-        case OP_WSTRING: {
-            wchar_t tmp[64];
-            int n = 0;
-            for (int k = 0; k < o->ncp; k++) tmp[n++] = (wchar_t)o->cp[k];
-            tmp[n] = 0;
-            serialize_write_wstring(&w, tmp, o->bufsize);
-            break;
-        }
         case OP_ALIGN: serialize_write_align(&w); break;
+        case OP_END: serialize_write_end(&w); break;
         case OP_OBJECT:
             serialize_write_bool(&w, 1);
             serialize_write_int(&w, 3, 0, 7);
@@ -360,6 +371,19 @@ static int write_program(Program *p, unsigned char *buf, int cap, int widen, int
         case OP_I128:
             record_ranged(p, o->kind, (uint64_t)o->max - (uint64_t)o->min, bstart);
             break;
+        case OP_FLOAT:
+            record_field(p, o->kind, bstart + 23, 8, 0xFF);
+            break;
+        case OP_DOUBLE:
+            record_field(p, o->kind, bstart + 52, 11, 0x7FF);
+            break;
+        case OP_STRING:
+            if (o->len > 0) {
+                /* the payload starts at the byte boundary after the length */
+                int64_t payload = (bstart + serialize_bits_required(0, o->bufsize - 1) + 7) / 8 * 8;
+                record_field(p, o->kind, payload + 8 * (p->id % o->len), 8, (p->id & 1) ? 0xFF : 0x00);
+            }
+            break;
         }
     }
     serialize_write_flush(&w);
@@ -372,8 +396,9 @@ static int write_program(Program *p, unsigned char *buf, int cap, int widen, int
 typedef struct {
     int accept;
     int refstep;
-    int ntok[MAXOPS];
-    char tok[MAXOPS][MAXTOK][TOKLEN];
+    char reason[32];
+    int ntok[MAXOPS + 1];
+    char tok[MAXOPS + 1][MAXTOK][TOKLEN];
 } ReadResult;
 
 static void tok_u64(char *out, uint64_t v) { snprintf(out, TOKLEN, "%016" PRIx64, v); }
@@ -445,25 +470,8 @@ static int read_program(const unsigned char *bytes, int nbytes, Program *p, Read
             if (ok) tok_hexbytes(r->tok[i][0], (unsigned char *)tmp, (int)strlen(tmp));
             break;
         }
-        case OP_WSTRING: {
-            wchar_t tmp[128];
-            memset(tmp, 0, sizeof(tmp));
-            ok = serialize_read_wstring(&rd, tmp, o->bufsize);
-            if (ok) {
-                int n = 0;
-                while (tmp[n] != 0) n++;
-                r->tok[i][0][0] = 0;
-                if (n == 0) strcpy(r->tok[i][0], "-");
-                for (int k = 0; k < n; k++) {
-                    char one[16];
-                    snprintf(one, sizeof(one), "%08" PRIx32, (uint32_t)tmp[k]);
-                    if (k) strcat(r->tok[i][0], ",");
-                    strcat(r->tok[i][0], one);
-                }
-            }
-            break;
-        }
         case OP_ALIGN: ok = serialize_read_align(&rd); if (ok) r->ntok[i] = 0; break;
+        case OP_END: ok = serialize_read_end(&rd); if (ok) r->ntok[i] = 0; break;
         case OP_OBJECT: {
             int b = 0, iv = 0; uint16_t uv = 0;
             ok = serialize_read_bool(&rd, &b);
@@ -480,14 +488,16 @@ static int read_program(const unsigned char *bytes, int nbytes, Program *p, Read
         if (!ok) {
             r->accept = 0;
             r->refstep = i;
+            snprintf(r->reason, sizeof(r->reason), "%s", serialize_refusal_name(serialize_read_refusal(&rd)));
             return 1;
         }
-        if (o->kind != OP_ALIGN) {
+        if (o->kind != OP_ALIGN && o->kind != OP_END) {
             r->ntok[i] = o->kind == OP_OBJECT ? 3 : 1;
         }
     }
     r->accept = 1;
     r->refstep = p->nops;
+    snprintf(r->reason, sizeof(r->reason), "none");
     return 1;
 }
 
@@ -495,7 +505,7 @@ static int read_program(const unsigned char *bytes, int nbytes, Program *p, Read
 
 /* Targets are chosen independently of the base generator's stream, so adding
    them does not perturb the programs and mutants it already covers. */
-static int targeted_kind[OP_KINDS];
+static int targeted_kind[OP_KINDS + 1];
 
 static void set_bits_le(unsigned char *buf, int bit, int width, uint64_t value) {
     for (int k = 0; k < width; k++) {
@@ -540,6 +550,10 @@ static int make_mutant(Program *p) {
         int extra = 1 + (int)rnd(4);
         for (int k = 0; k < extra; k++) p->mutant[p->nmutant++] = (unsigned char)rng_next();
     }
+    /* Half the mutants keep their random mutation (bit flips, truncation, or
+       appended bytes that reach the end's trailing_data); the other half are
+       targeted.  The split is by id, so the generator stream is untouched. */
+    if (p->id & 2) return 0;
     return make_targeted_mutant(p);
 }
 
@@ -593,13 +607,8 @@ static void write_op_line(FILE *f, const Op *o) {
         fprintf(f, "string %d %s\n", o->bufsize, hx);
         break;
     }
-    case OP_WSTRING:
-        fprintf(f, "wstring %d ", o->bufsize);
-        if (o->ncp == 0) fprintf(f, "-");
-        for (int i = 0; i < o->ncp; i++) fprintf(f, "%s%08" PRIx32, i ? "," : "", (uint32_t)o->cp[i]);
-        fprintf(f, "\n");
-        break;
     case OP_ALIGN: fprintf(f, "align\n"); break;
+    case OP_END: fprintf(f, "end\n"); break;
     case OP_OBJECT: fprintf(f, "object\n"); break;
     }
 }
@@ -678,12 +687,14 @@ static int parse_out(const char *path, LobOut *outs, int nprog, int base) {
             char *src = strtok_r(NULL, " ", &save);
             char *acc = strtok_r(NULL, " ", &save);
             char *st = strtok_r(NULL, " ", &save);
-            if (!ids || !src || !acc || !st) { rc = -1; break; }
+            char *why = strtok_r(NULL, " ", &save);
+            if (!ids || !src || !acc || !st || !why) { rc = -1; break; }
             int id = atoi(ids) - base;
             if (id < 0 || id >= nprog) { rc = -1; break; }
             ReadResult *r = (src[0] == 'c') ? &outs[id].c : &outs[id].m;
             r->accept = atoi(acc);
             r->refstep = atoi(st);
+            snprintf(r->reason, sizeof(r->reason), "%s", why);
             if (src[0] == 'c') outs[id].seen |= 2; else outs[id].seen |= 4;
         } else if (strcmp(tag, "V") == 0) {
             char *ids = strtok_r(NULL, " ", &save);
@@ -692,7 +703,7 @@ static int parse_out(const char *path, LobOut *outs, int nprog, int base) {
             if (!ids || !src || !idx) { rc = -1; break; }
             int id = atoi(ids) - base;
             int i = atoi(idx);
-            if (id < 0 || id >= nprog || i < 0 || i >= MAXOPS) { rc = -1; break; }
+            if (id < 0 || id >= nprog || i < 0 || i > MAXOPS) { rc = -1; break; }
             ReadResult *r = (src[0] == 'c') ? &outs[id].c : &outs[id].m;
             int k = 0;
             char *tok;
@@ -737,8 +748,8 @@ static void print_program(FILE *f, Program *p, int widen) {
         case OP_CFLOAT_PRE: fprintf(f, "cfloat_pre %" PRIu32 " %d", p->ops[i].cmax, p->ops[i].cbits); break;
         case OP_BYTES: { char hx[256]; hex_encode(hx, p->ops[i].buf, p->ops[i].len); fprintf(f, "bytes %d %s", p->ops[i].len, hx); break; }
         case OP_STRING: { char hx[256]; hex_encode(hx, p->ops[i].buf, p->ops[i].len); fprintf(f, "string %d %s", p->ops[i].bufsize, hx); break; }
-        case OP_WSTRING: fprintf(f, "wstring %d (%d cps)", p->ops[i].bufsize, p->ops[i].ncp); break;
         case OP_ALIGN: fprintf(f, "align"); break;
+        case OP_END: fprintf(f, "end"); break;
         case OP_OBJECT: fprintf(f, "object"); break;
         }
         fprintf(f, "\n");
@@ -753,6 +764,11 @@ static int compare_read(const char *what, Program *p, ReadResult *exp, ReadResul
     }
     if (!exp->accept && exp->refstep != got->refstep) {
         fprintf(stderr, "%s: refusal step mismatch (C %d, Lobster %d)\n", what, exp->refstep, got->refstep);
+        *failed = 1;
+        return 0;
+    }
+    if (strcmp(exp->reason, got->reason) != 0) {
+        fprintf(stderr, "%s: refusal reason mismatch (C %s, Lobster %s)\n", what, exp->reason, got->reason);
         *failed = 1;
         return 0;
     }
@@ -773,6 +789,16 @@ static int compare_read(const char *what, Program *p, ReadResult *exp, ReadResul
         }
     }
     return 1;
+}
+
+/* How many mutants the oracle refused, per reason: the PASS line prints them,
+   so a run that stops reaching a rule shows it. */
+static int refused_by_reason[SERIALIZE_REFUSAL_NON_CANONICAL + 1];
+
+static void count_reason(const char *reason) {
+    for (int k = 1; k <= (int)SERIALIZE_REFUSAL_NON_CANONICAL; k++) {
+        if (strcmp(reason, serialize_refusal_name((serialize_refusal_t)k)) == 0) refused_by_reason[k]++;
+    }
 }
 
 static int run_batch(const char *lobster, const char *driver, const char *tmpdir,
@@ -837,6 +863,7 @@ static int run_batch(const char *lobster, const char *driver, const char *tmpdir
         }
         if (p->has_mutant) {
             if (read_program(p->mutant, p->nmutant, p, &expm) != 1) { failed = 1; continue; }
+            if (!expm.accept) count_reason(expm.reason);
             if (!compare_read("mutant", p, &expm, &lo->m, &failed)) {
                 print_program(stderr, p, widen);
                 char a[BUFCAP * 2 + 8];
@@ -892,6 +919,10 @@ int main(int argc, char **argv) {
         printf("--- FAIL TestDifferentialAgainstSerializeC\n");
         return 1;
     }
-    printf("--- PASS TestDifferentialAgainstSerializeC: %d programs, %d mutants (%d targeted at ranged offsets)\n", PROGRAMS, mutant_count, targeted_count);
+    printf("--- PASS TestDifferentialAgainstSerializeC: %d programs, %d mutants (%d targeted at ranged offsets, float exponents and string bytes); mutants refused by reason:", PROGRAMS, mutant_count, targeted_count);
+    for (int k = 1; k <= (int)SERIALIZE_REFUSAL_NON_CANONICAL; k++) {
+        if (refused_by_reason[k] > 0) printf(" %s %d", serialize_refusal_name((serialize_refusal_t)k), refused_by_reason[k]);
+    }
+    printf("\n");
     return 0;
 }

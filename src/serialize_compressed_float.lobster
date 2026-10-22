@@ -2,7 +2,7 @@
 // and the parameter derivation (STANDARD.md, Floating Point, compressed_float;
 // DESIGN.md (c), (f)).
 //
-// The arithmetic is float32 with every step rounded, in serialize.c v1.11.2's
+// The arithmetic is float32 with every step rounded, in serialize.c v2.0.0's
 // order (STANDARD.md, compressed_float): the product rounds before 0.5 is
 // added and that sum rounds before the floor; the decode rounds the quotient,
 // the product before min is added, and the sum.
@@ -20,6 +20,17 @@ def serialize_compressed_float_abort_params():
 
 def serialize_compressed_float_abort_nonfinite():
     serialize_abort("serialize: compressed float declaration must be finite")
+
+def serialize_compressed_float_abort_top():
+    serialize_abort("serialize: compressed float declaration must decode its top integer finite (min + delta)")
+
+// The write path's declaration check (STANDARD.md, compressed_float: "the
+// decode of max_integer_value (min + delta, rounded once) finite in float32").
+// Asserted on write only; a reader refuses the non-finite decode instead.
+def serialize_compressed_float_check_top(delta:float, min:float):
+    let top = serialize_float32_round(serialize_float32_round(min) + delta)
+    if not serialize_compressed_float_is_finite(top):
+        serialize_compressed_float_abort_top()
 
 def serialize_compressed_float_abort_value():
     serialize_abort("serialize: compressed float value must be finite")
@@ -92,13 +103,22 @@ def serialize_compressed_float_read_precomputed(s:serialize_read_stream, value:f
         return value, false
     let integer_value = s.unpack_bits(bits)
     if integer_value > max_integer_value:
-        return value, s.fail()
+        return value, s.fail(serialize_refusal_value_out_of_range)
     let normalized = serialize_float32_round(float(integer_value) / float(max_integer_value))
     let scaled = serialize_float32_round(normalized * delta)
-    return serialize_float32_round(scaled + fmin), true
+    let decoded = serialize_float32_round(scaled + fmin)
+    // The decode must be finite: every operand is finite and the integer is in
+    // range, and still the final add can round past FLT_MAX. A non-finite
+    // decode is refused whatever the declaration, destination untouched
+    // (STANDARD.md, compressed_float, "The decode must be finite").
+    let decoded_bits = serialize_float32_bits(decoded)
+    if not serialize_float32_bits_are_finite(decoded_bits):
+        return value, s.fail(serialize_refusal_non_finite_float)
+    return decoded, true
 
 def serialize_compressed_float(s:serialize_write_stream, value:float, min:float, max:float, res:float):
     let max_integer_value, bits, delta = serialize_compressed_float_params(min, max, res)
+    serialize_compressed_float_check_top(delta, min)
     let fvalue = serialize_float32_round(value)
     if not serialize_compressed_float_is_finite(fvalue):
         serialize_compressed_float_abort_value()
@@ -119,6 +139,7 @@ def serialize_compressed_float(s:serialize_measure_stream, value:float, min:floa
 
 def serialize_compressed_float_precomputed(s:serialize_write_stream, value:float, max_integer_value:int, bits:int, delta:float, min:float):
     serialize_compressed_float_validate_precomputed(max_integer_value, bits, delta)
+    serialize_compressed_float_check_top(delta, min)
     let fvalue = serialize_float32_round(value)
     if not serialize_compressed_float_is_finite(fvalue):
         serialize_compressed_float_abort_value()

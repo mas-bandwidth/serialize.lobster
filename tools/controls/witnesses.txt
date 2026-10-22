@@ -1,0 +1,18 @@
+# tools/controls/witnesses.txt -- the REVERSED WITNESSES of the unit tests,
+# read by tools/controls/controls.sh. Each row plants the OLD behaviour of one
+# format 2.0 rule back into a staged copy of src/ and names the unit test that
+# must then go red. Fields are TAB separated: witness, file, the count of lines
+# the needle must match, the needle (an exact whole line), the line that
+# replaces it, the test directory, and the test. A test marked expect-abort
+# goes red when it no longer aborts.
+#
+# The read-side rules are witnessed by the per-rule controls in table.txt.
+# One rule has no witness here because the API cannot observe it: a string
+# read checks the claimed length against the remaining bytes BEFORE it
+# allocates the payload; planting the allocation first changes only the
+# memory used (measured by hand on 2026-10-22: 16 MB against 2.16 GB maximum
+# resident for strings_claimed_length_before_allocation).
+float-write-finite	src/serialize_float.lobster	1	    if not serialize_float32_bits_are_finite(pattern):	    if not serialize_float32_bits_are_finite(pattern) and pattern == 0:	float	TestSerializeFloat
+double-write-finite	src/serialize_float.lobster	1	    if not serialize_float64_bits_are_finite(pattern):	    if not serialize_float64_bits_are_finite(pattern) and pattern == 0:	float	TestSerializeFloat
+compressed-float-write-top	src/serialize_compressed_float.lobster	1	    if not serialize_compressed_float_is_finite(top):	    if not serialize_compressed_float_is_finite(top) and top == 0.0:	float	TestSerializeFloatCompressedNonFiniteTopAbort
+first-reason-latch	src/serialize_stream.lobster	1	        if not failed:	        if failed or not failed:	smoke	TestSmoke

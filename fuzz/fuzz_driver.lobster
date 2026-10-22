@@ -3,8 +3,9 @@
 // Reads one batch written by fuzz/host.c, replays every program on the port's
 // write stream, then reads the C writer's bytes and, where present, the mutant
 // bytes. Prints one W line per program (the port's bytes) and R/V lines with
-// the accept/refuse verdict, the refusing step and every value decoded before
-// it. The host compares these against serialize.c's own results.
+// the accept/refuse verdict, the refusing step, the refusal reason ("none" on
+// an accepted read) and every value decoded before it. The host compares
+// these against serialize.c's own results.
 
 import serialize
 
@@ -81,26 +82,6 @@ def fz_join(items:[string]) -> string:
 def fz_hex128(hi:int, lo:int) -> string:
     return fz_hex(hi, 16) + fz_hex(lo, 16)
 
-def fz_codepoints(text:string) -> string:
-    if text == "-" or length(text) == 0:
-        return "-"
-    var out = ""
-    for(tokenize(text, ",", "")) tok, i:
-        if length(tok) > 0:
-            if i > 0:
-                out += ","
-            out += fz_hex(fz_parse_hex(tok), 8)
-    return out
-
-def fz_parse_codepoints(text:string) -> [int]:
-    var out:[int] = []
-    if text == "-":
-        return out
-    for(tokenize(text, ",", "")) tok:
-        if length(tok) > 0:
-            out.push(fz_parse_hex(tok))
-    return out
-
 // ---------------------------------------------------------------------------
 // object: the caller's own serialize (STANDARD.md, object; DESIGN.md (a))
 // ---------------------------------------------------------------------------
@@ -152,18 +133,18 @@ def fz_write(s:serialize_write_stream, line:string) -> bool:
         var v = fz_parse_dec(t[3])
         v, ok = s.serialize_int64(v, fz_parse_dec(t[1]), fz_parse_dec(t[2]))
     elif kind == "int_rel":
-        var cur = fz_parse_dec(t[2])
-        var got, o2 = s.serialize_int_relative(fz_parse_dec(t[1]), cur)
+        let cur = fz_parse_dec(t[2])
+        let _got, o2 = s.serialize_int_relative(fz_parse_dec(t[1]), cur)
         ok = o2
     elif kind == "uint128":
         let v = serialize_uint128_make(fz_parse_hex(t[2]), fz_parse_hex(t[1]))
-        var got, o2 = s.serialize_uint128(v)
+        let _got, o2 = s.serialize_uint128(v)
         ok = o2
     elif kind == "int128":
         let v = serialize_int128_make(fz_parse_hex(t[6]), fz_parse_hex(t[5]))
         let mn = serialize_int128_make(fz_parse_hex(t[2]), fz_parse_hex(t[1]))
         let mx = serialize_int128_make(fz_parse_hex(t[4]), fz_parse_hex(t[3]))
-        var got, o2 = s.serialize_int128(v, mn, mx)
+        let _got, o2 = s.serialize_int128(v, mn, mx)
         ok = o2
     elif kind == "float":
         var v = serialize_float32_from_bits(fz_parse_hex(t[1]))
@@ -179,7 +160,7 @@ def fz_write(s:serialize_write_stream, line:string) -> bool:
         v, ok = s.serialize_fixed64(v, fz_parse_dec(t[1]), fz_parse_dec(t[2]), fz_parse_dec(t[3]), fz_parse_dec(t[4]))
     elif kind == "fixed128":
         let v = serialize_int128_make(fz_parse_hex(t[6]), fz_parse_hex(t[5]))
-        var got, o2 = s.serialize_fixed128(v, fz_parse_dec(t[1]), fz_parse_dec(t[2]), fz_parse_dec(t[3]), fz_parse_dec(t[4]))
+        let _got, o2 = s.serialize_fixed128(v, fz_parse_dec(t[1]), fz_parse_dec(t[2]), fz_parse_dec(t[3]), fz_parse_dec(t[4]))
         ok = o2
     elif kind == "cfloat":
         var v = serialize_float32_from_bits(fz_parse_hex(t[4]))
@@ -200,11 +181,10 @@ def fz_write(s:serialize_write_stream, line:string) -> bool:
     elif kind == "string":
         var d = fz_hex_to_bytes(t[2])
         d, ok = s.serialize_string(d, fz_parse_dec(t[1]))
-    elif kind == "wstring":
-        var d = fz_parse_codepoints(t[2])
-        d, ok = s.serialize_wstring(d, fz_parse_dec(t[1]))
     elif kind == "align":
         ok = s.serialize_align()
+    elif kind == "end":
+        ok = s.serialize_end()
     elif kind == "object":
         let o = fz_object { b: true, i: 3, u: 42 }
         ok = s.serialize_object(o)
@@ -231,7 +211,7 @@ def fz_read(s:serialize_read_stream, line:string) -> bool, [string]:
     let t = tokenize(line, " ", "")
     let kind = t[0]
     var ok = true
-    var toks:[string] = []
+    let toks:[string] = []
     if kind == "bits":
         var v = 0
         v, ok = s.serialize_bits(v, fz_parse_dec(t[1]))
@@ -346,21 +326,10 @@ def fz_read(s:serialize_read_stream, line:string) -> bool, [string]:
         v, ok = s.serialize_string(v, fz_parse_dec(t[1]))
         if ok:
             toks.push(fz_hex_bytes(v))
-    elif kind == "wstring":
-        var v:[int] = []
-        v, ok = s.serialize_wstring(v, fz_parse_dec(t[1]))
-        if ok:
-            if length(v) == 0:
-                toks.push("-")
-            else:
-                var s2 = ""
-                for(v) c, i:
-                    if i > 0:
-                        s2 += ","
-                    s2 += fz_hex(c, 8)
-                toks.push(s2)
     elif kind == "align":
         ok = s.serialize_align()
+    elif kind == "end":
+        ok = s.serialize_end()
     elif kind == "object":
         let o = fz_object {}
         ok = s.serialize_object(o)
@@ -387,7 +356,7 @@ def fz_run_read(bytes:string, ops:[string], id:int, src:string) -> string:
         if length(toks) > 0:
             body += "V " + string(id) + " " + src + " " + string(i) + " " + fz_join(toks) + "\n"
     let accint = if acc: "1" else: "0"
-    return "R " + string(id) + " " + src + " " + accint + " " + string(step) + "\n" + body
+    return "R " + string(id) + " " + src + " " + accint + " " + string(step) + " " + r.refusal_name() + "\n" + body
 
 def fz_main():
     let args = command_line_arguments()
@@ -418,7 +387,7 @@ def fz_main():
         let has_mutant = fz_parse_dec(t[3]) != 0
         let cbytes = fz_hex_to_bytes(t[4])
         let mbytes = fz_hex_to_bytes(t[5])
-        var ops:[string] = []
+        let ops:[string] = []
         for(nops) k:
             ops.push(lines[i + 1 + k])
         i += 1 + nops

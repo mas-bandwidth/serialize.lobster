@@ -13,7 +13,8 @@
 #     Test<Name>()
 #     print "serialize-test-done"
 #
-# A test passes when the process exits 0 AND printed the done line. A test whose
+# A test passes when the process exits 0 AND printed the done line, and the
+# compiler printed no warning (zero warnings, src/ and tests alike). A test whose
 # def is preceded by the line `// expect-abort: <message>` passes only when the
 # process exits nonzero AND printed <message> as a whole line, and never printed
 # the done line: that is how an abort (API misuse, a stub) is proved.
@@ -109,7 +110,13 @@ for name in $names; do
             code=$?
             set -e
             ok=0
-            if [ -z "$expect" ]; then
+            # Zero warnings, always: a compiler warning anywhere in the
+            # program (src/ or the test) fails the test.
+            warned=0
+            if printf '%s\n' "$out" | grep -q ': warning: '; then warned=1; fi
+            if [ $warned -eq 1 ]; then
+                :
+            elif [ -z "$expect" ]; then
                 if [ $code -eq 0 ] && printf '%s\n' "$out" | grep -qx "$done_line"; then ok=1; fi
             else
                 if [ $code -ne 0 ] && printf '%s\n' "$out" | grep -qxF "$expect" \
@@ -119,6 +126,9 @@ for name in $names; do
                 echo "--- PASS $t"
             else
                 echo "--- FAIL $t"
+                if [ $warned -eq 1 ]; then
+                    echo "    the compiler warned (zero warnings is the rule)"
+                fi
                 if [ -n "$expect" ]; then
                     echo "    expected an abort (nonzero exit) printing: $expect"
                 fi

@@ -126,7 +126,7 @@ def serialize_bits(s:serialize_write_stream, value:int, bits:int):
     if s.failed:
         return value, false
     if value < 0 or value > serialize_mask(bits):
-        return value, s.fail()
+        return value, s.fail(serialize_refusal_value_out_of_range)
     if not s.write_gate(bits):
         return value, false
     s.pack_bits(value, bits)
@@ -154,7 +154,7 @@ def serialize_bits64(s:serialize_write_stream, value:int, bits:int):
     if s.failed:
         return value, false
     if bits < 64 and (value < 0 or value > serialize_mask(bits)):
-        return value, s.fail()
+        return value, s.fail(serialize_refusal_value_out_of_range)
     if not s.write_gate(bits):
         return value, false
     s.pack_bits64(value, bits)
