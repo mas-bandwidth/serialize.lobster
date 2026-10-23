@@ -7,7 +7,7 @@
 # test/<name>/<x>_test.lobster; each `def Test<Name>():` at the start of a line
 # is one test. Each test runs in its own process, from build/run/<name>/, which
 # holds a copy of src/*.lobster, every .lobster file of test/<name>/, the
-# vendored conformance/ and conformance-controls/ directories and one driver per test:
+# corpus's conformance/ and conformance-controls/ directories and one driver per test:
 #
 #     import <x>_test
 #     Test<Name>()
@@ -23,12 +23,28 @@
 # (the output indented below a FAIL). Exits nonzero on any FAIL, on a missing or
 # empty test/<name>/, on a test file that declares no test: never a skip. The
 # last line is `ok N test directories` or `FAIL k of N test directories`.
+#
+# The corpus is the vendored conformance/ and conformance-controls/ unless
+# SERIALIZE_CONFORMANCE_DIR and SERIALIZE_CONFORMANCE_CONTROLS_DIR name other
+# directories (the nightly functional test points them at mas-bandwidth/serialize
+# main). An override that is not a directory fails, naming it: never a silent
+# fall back to the vendored copy.
 
 set -eu
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 : "${LOBSTER:?LOBSTER must name the lobster executable (make test sets it)}"
 done_line="serialize-test-done"
+corpus=${SERIALIZE_CONFORMANCE_DIR:-$root/conformance}
+controls=${SERIALIZE_CONFORMANCE_CONTROLS_DIR:-$root/conformance-controls}
+if [ -n "${SERIALIZE_CONFORMANCE_DIR:-}" ] && [ ! -d "$corpus" ]; then
+    echo "FAIL SERIALIZE_CONFORMANCE_DIR=$corpus is not a directory"
+    exit 1
+fi
+if [ -n "${SERIALIZE_CONFORMANCE_CONTROLS_DIR:-}" ] && [ ! -d "$controls" ]; then
+    echo "FAIL SERIALIZE_CONFORMANCE_CONTROLS_DIR=$controls is not a directory"
+    exit 1
+fi
 
 if [ $# -gt 1 ]; then
     echo "usage: tools/run_tests.sh [name]"
@@ -81,11 +97,11 @@ for name in $names; do
     mkdir -p "$run"
     cp "$root"/src/*.lobster "$run"/
     cp "$dir"/*.lobster "$run"/
-    if [ -d "$root/conformance" ]; then
-        cp -r "$root/conformance" "$run/conformance"
+    if [ -d "$corpus" ]; then
+        cp -r "$corpus" "$run/conformance"
     fi
-    if [ -d "$root/conformance-controls" ]; then
-        cp -r "$root/conformance-controls" "$run/conformance-controls"
+    if [ -d "$controls" ]; then
+        cp -r "$controls" "$run/conformance-controls"
     fi
 
     dir_failed=0

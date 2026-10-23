@@ -19,6 +19,9 @@ jobs:
       - name: Check CI workflow invariants
         run: make check-ci
 
+      - name: Corpus directory override (SERIALIZE_CONFORMANCE_DIR) unit test
+        run: make check-corpus-dir
+
       - name: Fetch the pinned Lobster toolchain
         run: make dist-lobster
 
