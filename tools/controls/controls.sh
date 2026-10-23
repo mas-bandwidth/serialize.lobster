@@ -24,6 +24,12 @@
 # then FAIL. And the harness's own control: conf_control over an UNSABOTAGED
 # copy must fail, or the comparison it makes has stopped discriminating.
 #
+# The corpus and the controls' lists are the vendored conformance/ and
+# conformance-controls/ unless SERIALIZE_CONFORMANCE_DIR and
+# SERIALIZE_CONFORMANCE_CONTROLS_DIR name other directories (the nightly
+# functional test points them at mas-bandwidth/serialize main). One that is not
+# a directory fails, naming it.
+#
 # Prints `RUN Control<control>` / `RUN Witness<name>` then `--- PASS` or
 # `--- FAIL` for each, and `ok N controls` or `FAIL k of N controls` last.
 
@@ -35,10 +41,18 @@ table="$root/tools/controls/table.txt"
 witnesses="$root/tools/controls/witnesses.txt"
 done_line="serialize-test-done"
 tab=$(printf '\t')
+corpus=${SERIALIZE_CONFORMANCE_DIR:-$root/conformance}
+controls=${SERIALIZE_CONFORMANCE_CONTROLS_DIR:-$root/conformance-controls}
+for d in "SERIALIZE_CONFORMANCE_DIR=$corpus" "SERIALIZE_CONFORMANCE_CONTROLS_DIR=$controls"; do
+    if [ ! -d "${d#*=}" ]; then
+        echo "FAIL $d is not a directory"
+        exit 1
+    fi
+done
 
 # Every .expected file has a row; every row names an .expected file.
 missing=0
-for f in "$root"/conformance-controls/*.expected; do
+for f in "$controls"/*.expected; do
     name=$(basename "$f" .expected)
     if ! grep -q "^$name$tab" "$table"; then
         echo "FAIL conformance-controls/$name.expected has no sabotage in tools/controls/table.txt"
@@ -46,7 +60,7 @@ for f in "$root"/conformance-controls/*.expected; do
     fi
 done
 for name in $(grep -v '^#' "$table" | grep -v '^$' | cut -f1 | sort -u); do
-    if [ ! -f "$root/conformance-controls/$name.expected" ]; then
+    if [ ! -f "$controls/$name.expected" ]; then
         echo "FAIL tools/controls/table.txt names $name, which has no conformance-controls/$name.expected"
         missing=1
     fi
@@ -64,8 +78,8 @@ stage() {
     mkdir -p "$1"
     cp "$root"/src/*.lobster "$1"/
     cp "$root"/test/conformance/conformance_test.lobster "$1"/
-    cp -R "$root/conformance" "$1/conformance"
-    cp -R "$root/conformance-controls" "$1/conformance-controls"
+    cp -R "$corpus" "$1/conformance"
+    cp -R "$controls" "$1/conformance-controls"
 }
 
 # patch DIR FILE COUNT NEEDLE PATCH: replace the whole line NEEDLE of

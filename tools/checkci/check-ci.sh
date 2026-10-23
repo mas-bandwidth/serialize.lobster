@@ -6,7 +6,9 @@
 # naming the line, on any runs-on that is not [self-hosted, Linux, X64, fleet, serialize],
 # when ci.yml spells a toolchain URL or sha256 (the pin lives once, in the
 # Makefile), when the workflow does not run `make dist-lobster` and `make test`,
-# or when its corpus tag differs from DESIGN.md's pin. Its own controls are
+# or when its corpus tag differs from DESIGN.md's pin. Every other workflow in
+# .github/workflows/ (the nightly functional test) is held to the same runner
+# and the same one-place pin. Its own controls are
 # scratch copies of ci.yml with `runs-on: ubuntu-latest` and with a pasted
 # sha256 and without the fork guard: every copy must fail this check, or TestCheckCI fails.
 set -u
@@ -105,6 +107,23 @@ EOF_PIN
 printf 'RUN TestCheckCI\n'
 
 check_file "$ci"
+
+# Every other workflow: the fleet runner and the Makefile pin, as ci.yml.
+if [ $# -eq 0 ]; then
+	for wf in "$root"/.github/workflows/*.yml; do
+		[ "$wf" = "$ci" ] && continue
+		while IFS= read -r bad_runner; do
+			[ -n "$bad_runner" ] && fail "$bad_runner: runs-on must be [self-hosted, Linux, X64, fleet, serialize]"
+		done <<EOF_WF_RUNS_ON
+$(scan_runs_on "$wf")
+EOF_WF_RUNS_ON
+		while IFS= read -r spelled; do
+			[ -n "$spelled" ] && fail "$spelled: the toolchain pin is spelled in a workflow; it belongs only in the Makefile"
+		done <<EOF_WF_PIN
+$(scan_pin "$wf")
+EOF_WF_PIN
+	done
+fi
 
 # Run self-controls when checking the repository's default ci.yml.
 if [ $# -eq 0 ] && [ "$bad" -eq 0 ]; then
