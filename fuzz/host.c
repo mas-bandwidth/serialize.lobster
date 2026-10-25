@@ -216,6 +216,9 @@ static void gen_op(Op *o) {
         o->bits = 32;
         o->min = rnd(3) == 0 ? 5 : -r;
         o->max = rnd(3) == 0 ? 5 : r;
+        /* min 5 with max r < 5 is an empty range: swap it (the fixed seed
+           never draws one; the nightly's first random seed did) */
+        if (o->min > o->max) { int64_t t = o->min; o->min = o->max; o->max = t; }
         o->s = rnd_i32_range((int32_t)o->min, (int32_t)o->max);
         break;
     }
@@ -224,6 +227,8 @@ static void gen_op(Op *o) {
         o->bits = 64;
         o->min = rnd(3) == 0 ? -3 : -r;
         o->max = rnd(3) == 0 ? -3 : r;
+        /* min -r with max -3, r < 3, is an empty range: swap it */
+        if (o->min > o->max) { int64_t t = o->min; o->min = o->max; o->max = t; }
         o->s = rnd_i64_range(o->min, o->max);
         break;
     }
