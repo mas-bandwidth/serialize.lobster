@@ -927,7 +927,7 @@ static int copy_file(const char *from, const char *to) {
    reproduce them in dir (created if missing). */
 static void save_failure(const char *dir, const char *work, uint64_t seed,
                          long long first, long long end, int negative) {
-    char from[4096], to[4096];
+    char from[4096 + 64], to[4096 + 64]; /* work is a 4096-byte path; room for the file name */
     mkdir(dir, 0755);
     snprintf(from, sizeof(from), "%s/batch.txt", work);
     snprintf(to, sizeof(to), "%s/batch.txt", dir);
