@@ -1,0 +1,105 @@
+name: nightly fuzz
+
+# A functional test, nightly, on our own fleet: the differential fuzz against
+# serialize.c v2.0.0 (make/fuzz.mk, fuzz/host.c), run for an hour instead of
+# the per-push gate's 2000 fixed-seed programs, from a fresh seed every run.
+#
+# ci.yml runs `make fuzz` at its defaults on every push: the same 2000
+# programs from the same fixed seed, a cheap regression gate that never finds
+# anything new. This job is the search. It draws a 64-bit seed per run (or
+# takes the `seed` input, to reproduce one), prints it in the log and the job
+# summary, and runs `make fuzz` with FUZZ_DURATION and FUZZ_PROGRAMS=0, so
+# batches of generated programs run until the duration is spent. `make fuzz`
+# then runs its three negative controls (the C side one bit wider; the
+# reader's range refusals removed, build/fuzz/stage-norange; embedded_nul
+# reported as invalid_utf8, build/fuzz/stage-reason) at their fixed defaults,
+# each of which must go red for its own reason. A failure uploads
+# build/fuzz/failures/ (the failing batch as the Lobster child read it, its
+# output, REPRODUCE.txt with the seed and the make line) and the logs.
+#
+# The generator is the corpus: there is no coverage-guided corpus to carry
+# between runs (Lobster has no native fuzzer), so the reference's corpus cache
+# has no counterpart here; the per-run seed is what makes each night new.
+#
+# No push or pull_request trigger: this never runs in the one-minute CI path.
+
+on:
+  schedule:
+    - cron: '43 5 * * *'   # every day at 05:43 UTC
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: 'Fuzz duration in seconds'
+        default: '3600'
+        required: false
+      seed:
+        description: 'Seed (u64, decimal or 0x hex) to reproduce a run; empty draws a fresh one'
+        default: ''
+        required: false
+      sabotage:
+        description: 'Negative control: the checkout reports embedded_nul as invalid_utf8, so the timed run must go red and upload its failing inputs'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  fuzz:
+    name: differential fuzz against serialize.c, extended, on the fleet
+    # The fleet's self-hosted runners serve this repository only: a fork's
+    # copy of this workflow never runs on them.
+    if: github.repository == 'mas-bandwidth/serialize.lobster'
+    runs-on: [self-hosted, Linux, X64, fleet, serialize]
+    timeout-minutes: 120
+    env:
+      DURATION: ${{ github.event.inputs.duration || '3600' }}
+      SEED_INPUT: ${{ github.event.inputs.seed || '' }}
+    steps:
+      - name: Runner
+        run: echo "runner $RUNNER_NAME"
+
+      - uses: actions/checkout@v4
+
+      - name: Fetch the pinned Lobster toolchain
+        run: make dist-lobster
+
+      - name: Seed
+        run: |
+          case "$DURATION" in ''|*[!0-9]*) echo "duration '$DURATION' is not a number of seconds"; exit 1;; esac
+          if [ -n "$SEED_INPUT" ]; then
+            seed="$SEED_INPUT"
+          else
+            seed="0x$(od -An -N8 -tx8 /dev/urandom | tr -d ' \n')"
+          fi
+          echo "FUZZ_SEED=$seed" >> "$GITHUB_ENV"
+          echo "seed $seed, duration ${DURATION}s"
+          echo "Fuzz seed \`$seed\`, duration ${DURATION}s. Reproduce: \`make fuzz-run FUZZ_SEED=$seed FUZZ_PROGRAMS=<the failing batch's end>\` (REPRODUCE.txt names it)." >> "$GITHUB_STEP_SUMMARY"
+
+      # The negative control for this job: a dispatch with sabotage set makes
+      # the checkout's reader name invalid_utf8 where embedded_nul is due (the
+      # same needle as make fuzz's reason control), never committed anywhere,
+      # so the timed run must go red and the failing inputs must upload.
+      - name: Sabotage the reader's refusal reason (negative control only)
+        if: ${{ inputs.sabotage }}
+        run: |
+          sed -i 's/^        return serialize_refusal_embedded_nul$/        return serialize_refusal_invalid_utf8/' src/serialize_bytes.lobster
+          if grep -q '^        return serialize_refusal_embedded_nul$' src/serialize_bytes.lobster; then echo "sabotage did not apply"; exit 1; fi
+          git diff --stat
+
+      - name: Fuzz (timed differential run, then the three negative controls)
+        run: make fuzz FUZZ_SEED="$FUZZ_SEED" FUZZ_PROGRAMS=0 FUZZ_DURATION="$DURATION"
+
+      - name: Upload failing inputs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-failures-${{ github.run_id }}
+          path: |
+            build/fuzz/failures/
+            build/fuzz/*.log
+          if-no-files-found: ignore

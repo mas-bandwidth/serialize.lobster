@@ -19,6 +19,17 @@
 
     --negative-control makes the C side write one int range one bit wider,
     which must make the comparison red (the make target proves it does).
+
+    The budget and the stream are knobs, with defaults that are the per-push
+    gate exactly: --seed <u64> (default 0x9e3779b97f4a7c15, the fixed seed),
+    --programs <n> (default 2000; 0 means no count limit) and --duration
+    <seconds> (default 0, no time limit; when set, batches run until it is
+    spent, or until --programs when that is also given).  The seed is printed
+    first, so any run reproduces: the same --seed and a --programs that ends
+    at the failing batch regenerate exactly the failing programs.  With
+    --failures <dir>, a failing run copies the failing batch (the programs
+    and their bytes as the Lobster child saw them), the child's output and a
+    REPRODUCE.txt naming the seed and the command into <dir>.
 */
 
 #define _GNU_SOURCE
@@ -30,10 +41,12 @@
 #include <unistd.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
+#include <time.h>
 
 #include "serialize.h"
 
 #define PROGRAMS 2000
+#define DEFAULT_SEED 0x9e3779b97f4a7c15ULL
 #define BATCH 100
 #define MAXOPS 24
 #define BUFCAP 1024
@@ -84,7 +97,7 @@ typedef struct {
 
 /* ---------------------------------------------------------------- RNG --- */
 
-static uint64_t rng_state = 0x9e3779b97f4a7c15ULL;
+static uint64_t rng_state = DEFAULT_SEED;
 static uint64_t rng_next(void) {
     uint64_t z = (rng_state += 0x9e3779b97f4a7c15ULL);
     z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ULL;
@@ -879,47 +892,137 @@ static int run_batch(const char *lobster, const char *driver, const char *tmpdir
 
 /* --------------------------------------------------------------- main --- */
 
+static double now_seconds(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (double)ts.tv_sec + (double)ts.tv_nsec * 1e-9;
+}
+
+static int parse_u64(const char *text, uint64_t *out) {
+    char *end = NULL;
+    if (!text || !*text || *text == '-') return 0;
+    unsigned long long v = strtoull(text, &end, 0);
+    if (!end || *end != '\0') return 0;
+    *out = (uint64_t)v;
+    return 1;
+}
+
+static int copy_file(const char *from, const char *to) {
+    FILE *a = fopen(from, "rb");
+    if (!a) return 0;
+    FILE *b = fopen(to, "wb");
+    if (!b) { fclose(a); return 0; }
+    char buf[65536];
+    size_t n;
+    int ok = 1;
+    while ((n = fread(buf, 1, sizeof(buf), a)) > 0) {
+        if (fwrite(buf, 1, n, b) != n) { ok = 0; break; }
+    }
+    fclose(a);
+    if (fclose(b) != 0) ok = 0;
+    return ok;
+}
+
+/* save_failure keeps the failing batch, the child's output and how to
+   reproduce them in dir (created if missing). */
+static void save_failure(const char *dir, const char *work, uint64_t seed,
+                         long long first, long long end, int negative) {
+    char from[4096 + 64], to[4096 + 64]; /* work is a 4096-byte path; room for the file name */
+    mkdir(dir, 0755);
+    snprintf(from, sizeof(from), "%s/batch.txt", work);
+    snprintf(to, sizeof(to), "%s/batch.txt", dir);
+    if (!copy_file(from, to)) fprintf(stderr, "could not copy %s to %s\n", from, to);
+    snprintf(from, sizeof(from), "%s/result.txt", work);
+    snprintf(to, sizeof(to), "%s/result.txt", dir);
+    copy_file(from, to); /* absent when the child itself failed */
+    snprintf(to, sizeof(to), "%s/REPRODUCE.txt", dir);
+    FILE *f = fopen(to, "w");
+    if (!f) { perror("fopen REPRODUCE.txt"); return; }
+    fprintf(f, "seed 0x%016" PRIx64 "\n", seed);
+    fprintf(f, "failing batch: programs %lld..%lld\n", first, end - 1);
+    fprintf(f, "reproduce: make fuzz-run FUZZ_SEED=0x%016" PRIx64 " FUZZ_PROGRAMS=%lld%s\n",
+            seed, end, negative ? " (with --negative-control)" : "");
+    fprintf(f, "batch.txt is the batch the Lobster child read; result.txt is what it wrote.\n");
+    fclose(f);
+    fprintf(stderr, "failing inputs saved in %s\n", dir);
+}
+
 int main(int argc, char **argv) {
-    const char *lobster = NULL, *driver = NULL, *tmpbase = NULL;
+    const char *lobster = NULL, *driver = NULL, *tmpbase = NULL, *failures = NULL;
     int negative = 0;
+    uint64_t seed = DEFAULT_SEED, programs = PROGRAMS, duration = 0;
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--lobster") == 0 && i + 1 < argc) lobster = argv[++i];
         else if (strcmp(argv[i], "--driver") == 0 && i + 1 < argc) driver = argv[++i];
         else if (strcmp(argv[i], "--tmp") == 0 && i + 1 < argc) tmpbase = argv[++i];
+        else if (strcmp(argv[i], "--failures") == 0 && i + 1 < argc) failures = argv[++i];
         else if (strcmp(argv[i], "--negative-control") == 0) negative = 1;
+        else if (strcmp(argv[i], "--seed") == 0 && i + 1 < argc) {
+            if (!parse_u64(argv[++i], &seed)) { fprintf(stderr, "--seed %s is not an unsigned 64-bit integer\n", argv[i]); return 2; }
+        } else if (strcmp(argv[i], "--programs") == 0 && i + 1 < argc) {
+            if (!parse_u64(argv[++i], &programs) || programs > 1000000000ULL) { fprintf(stderr, "--programs %s is not a count up to 1e9\n", argv[i]); return 2; }
+        } else if (strcmp(argv[i], "--duration") == 0 && i + 1 < argc) {
+            if (!parse_u64(argv[++i], &duration) || duration > 604800ULL) { fprintf(stderr, "--duration %s is not seconds up to a week\n", argv[i]); return 2; }
+        }
         else { fprintf(stderr, "unknown argument %s\n", argv[i]); return 2; }
     }
     if (!lobster || !driver || !tmpbase) {
-        fprintf(stderr, "usage: host --lobster <path> --driver <path> --tmp <dir> [--negative-control]\n");
+        fprintf(stderr, "usage: host --lobster <path> --driver <path> --tmp <dir> [--negative-control]\n"
+                        "            [--seed <u64>] [--programs <n>] [--duration <seconds>] [--failures <dir>]\n");
+        return 2;
+    }
+    if (programs == 0 && duration == 0) {
+        fprintf(stderr, "--programs 0 needs a --duration: the run would never end\n");
         return 2;
     }
     char tmpl[4096];
     snprintf(tmpl, sizeof(tmpl), "%s/workXXXXXX", tmpbase);
     if (!mkdtemp(tmpl)) { perror("mkdtemp"); return 1; }
 
+    rng_state = seed;
     printf("RUN TestDifferentialAgainstSerializeC\n");
+    printf("seed 0x%016" PRIx64 " programs %s%" PRIu64 " duration %" PRIu64 "s\n",
+           seed, programs == 0 ? "unlimited/" : "", programs, duration);
     fflush(stdout);
 
     int widen_done = 0;
-    int mutant_count = 0, targeted_count = 0, fail = 0;
-    Program progs[BATCH];
-    for (int start = 0; start < PROGRAMS; start += BATCH) {
-        int n = PROGRAMS - start;
-        if (n > BATCH) n = BATCH;
+    int fail = 0;
+    long long mutant_count = 0, done = 0;
+    int targeted_count = 0;
+    double t0 = now_seconds(), last_report = t0;
+    static Program progs[BATCH];
+    for (long long start = 0; ; start += BATCH) {
+        if (programs != 0 && (uint64_t)start >= programs) break;
+        if (duration != 0 && now_seconds() - t0 >= (double)duration) break;
+        if (start > (long long)INT32_MAX - BATCH) break; /* program ids are int */
+        int n = BATCH;
+        if (programs != 0 && (uint64_t)(programs - (uint64_t)start) < (uint64_t)BATCH) n = (int)(programs - (uint64_t)start);
         for (int i = 0; i < n; i++) {
-            gen_program(&progs[i], start + i);
+            gen_program(&progs[i], (int)(start + i));
             /* keep the C oracle's expected bytes in the program */
         }
         int m = run_batch(lobster, driver, tmpl, progs, n, negative, &widen_done, &targeted_count);
-        if (m < 0) { fail = 1; break; }
+        if (m < 0) {
+            fail = 1;
+            fprintf(stderr, "failing batch: programs %lld..%lld, seed 0x%016" PRIx64 "; reproduce with --seed 0x%016" PRIx64 " --programs %lld\n",
+                    start, start + n - 1, seed, seed, start + n);
+            if (failures) save_failure(failures, tmpl, seed, start, start + n, negative);
+            break;
+        }
         mutant_count += m;
+        done = start + n;
+        if (duration != 0 && now_seconds() - last_report >= 60.0) {
+            last_report = now_seconds();
+            printf("  %lld programs, %lld mutants, %.0fs\n", done, mutant_count, last_report - t0);
+            fflush(stdout);
+        }
     }
 
     if (fail) {
-        printf("--- FAIL TestDifferentialAgainstSerializeC\n");
+        printf("--- FAIL TestDifferentialAgainstSerializeC (seed 0x%016" PRIx64 ")\n", seed);
         return 1;
     }
-    printf("--- PASS TestDifferentialAgainstSerializeC: %d programs, %d mutants (%d targeted at ranged offsets, float exponents and string bytes); mutants refused by reason:", PROGRAMS, mutant_count, targeted_count);
+    printf("--- PASS TestDifferentialAgainstSerializeC: %lld programs, %lld mutants (%d targeted at ranged offsets, float exponents and string bytes); mutants refused by reason:", done, mutant_count, targeted_count);
     for (int k = 1; k <= (int)SERIALIZE_REFUSAL_NON_CANONICAL; k++) {
         if (refused_by_reason[k] > 0) printf(" %s %d", serialize_refusal_name((serialize_refusal_t)k), refused_by_reason[k]);
     }
