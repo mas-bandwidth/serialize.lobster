@@ -7,6 +7,16 @@
 # one int range one bit wider and must go red.  A second control removes the
 # reader's range refusals from a staged copy of src/ and must also go red,
 # proving the targeted mutants reach those refusals.
+#
+# The budget and seed are knobs whose defaults are the per-push gate exactly
+# (2000 programs from the fixed seed): FUZZ_SEED=<u64>, FUZZ_PROGRAMS=<n>
+# (0 = no count limit) and FUZZ_DURATION=<seconds> pass through to the main
+# differential run as --seed, --programs and --duration.  The negative
+# controls always run at the defaults, so a witness never depends on a seed.
+# The run prints its seed first; a failing run leaves the failing batch, the
+# Lobster child's output and REPRODUCE.txt in build/fuzz/failures/.
+# `make fuzz-run` is the differential run alone (no controls), for
+# reproducing: make fuzz-run FUZZ_SEED=<seed> FUZZ_PROGRAMS=<n>.
 
 FUZZ_REF     := $(CURDIR)/.ref/serialize.c-v2.0.0
 FUZZ_BUILD   := $(CURDIR)/build/fuzz
@@ -16,8 +26,16 @@ FUZZ_DRIVER  := $(FUZZ_STAGE)/fuzz_driver.lobster
 FUZZ_WORK    := $(FUZZ_BUILD)/work
 FUZZ_NORANGE := $(FUZZ_BUILD)/stage-norange
 FUZZ_REASON  := $(FUZZ_BUILD)/stage-reason
+FUZZ_FAILURES := $(FUZZ_BUILD)/failures
 
-.PHONY: fuzz fuzz-ref
+FUZZ_SEED     ?=
+FUZZ_PROGRAMS ?=
+FUZZ_DURATION ?=
+FUZZ_KNOBS := $(if $(FUZZ_SEED),--seed $(FUZZ_SEED)) \
+	$(if $(FUZZ_PROGRAMS),--programs $(FUZZ_PROGRAMS)) \
+	$(if $(FUZZ_DURATION),--duration $(FUZZ_DURATION))
+
+.PHONY: fuzz fuzz-run fuzz-warnings fuzz-ref
 
 # The oracle, read only: serialize.c v2.0.0, header-only.  Cloned once into
 # .ref/ (gitignored, and excluded through .git/info/exclude).
@@ -38,13 +56,18 @@ $(FUZZ_DRIVER): fuzz/fuzz_driver.lobster $(wildcard src/*.lobster)
 	@cp src/*.lobster $(FUZZ_STAGE)/
 	@cp fuzz/fuzz_driver.lobster $(FUZZ_STAGE)/
 
-fuzz: toolchain-lobster $(FUZZ_HOST) $(FUZZ_DRIVER)
+fuzz-warnings: toolchain-lobster $(FUZZ_HOST) $(FUZZ_DRIVER)
 	@# Zero warnings, always: the driver run with no batch compiles everything
 	@# it reaches and prints its usage; any compiler warning is red.
 	@if (cd $(FUZZ_STAGE) && $(LOBSTER) fuzz_driver.lobster 2>&1) | grep ': warning: '; then \
 		echo "fuzz REFUSES: the driver or src/ compiles with warnings"; exit 1; fi
-	@rm -rf $(FUZZ_WORK) && mkdir -p $(FUZZ_WORK)
-	@$(FUZZ_HOST) --lobster $(LOBSTER) --driver $(FUZZ_DRIVER) --tmp $(FUZZ_WORK)
+
+fuzz-run: fuzz-warnings
+	@rm -rf $(FUZZ_WORK) $(FUZZ_FAILURES) && mkdir -p $(FUZZ_WORK)
+	@$(FUZZ_HOST) --lobster $(LOBSTER) --driver $(FUZZ_DRIVER) --tmp $(FUZZ_WORK) \
+		--failures $(FUZZ_FAILURES) $(strip $(FUZZ_KNOBS))
+
+fuzz: fuzz-run
 	@echo "negative control: the C side writes one int range one bit wider"
 	@if $(FUZZ_HOST) --lobster $(LOBSTER) --driver $(FUZZ_DRIVER) --tmp $(FUZZ_WORK) \
 		--negative-control >$(FUZZ_BUILD)/negative.log 2>&1; then \
