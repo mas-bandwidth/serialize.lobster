@@ -1,7 +1,0 @@
-# command: make check-corpus-dir
-# cwd: /home/nova/rowan-working/tmp/slots/ser-verify-lobster-fractional-fixed-differential.w2.g1.e1/jobs/ser-verify-lobster-fractional-fixed-differential.w2/repo
-# started: 2026-10-26T17:36:43Z
-RUN TestCorpusDir
---- PASS TestCorpusDir
-# exit status: 0
-# finished: 2026-10-26T17:36:43Z

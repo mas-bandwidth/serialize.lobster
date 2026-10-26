@@ -1,8 +1,0 @@
-# command: env PATH=/home/nova/rowan-working/tmp/slots/ser-verify-lobster-fractional-fixed-differential.w2.g1.e1/data/.local/bin:/home/nova/rowan-working/tmp/slots/ser-verify-lobster-fractional-fixed-differential.w2.g1.e1/shim:/home/nova/sdk/bin:/home/nova/sdk/go1.26.6/bin:/home/nova/sdk/bin:/home/nova/go/bin:/home/nova/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin make roadmap-check
-# cwd: /home/nova/rowan-working/tmp/slots/ser-verify-lobster-fractional-fixed-differential.w2.g1.e1/jobs/ser-verify-lobster-fractional-fixed-differential.w2/repo
-# started: 2026-10-26T17:36:43Z
-sbcl --script tools/roadmap/render.lisp --check docs/roadmap.sexp ROADMAP.md
-/home/nova/sdk/bin/sbcl: line 2: /home/nova/rowan-working/tmp/slots/ser-verify-lobster-fractional-fixed-differential.w2.g1.e1/jobs/ser-verify-lobster-fractional-fixed-differential.w2/repo/@@HOMEBREW_CELLAR@@/sbcl/2.6.9/libexec/bin/sbcl: No such file or directory
-make: *** [tools/roadmap/roadmap.mk:14: roadmap-check] Error 127
-# exit status: 2
-# finished: 2026-10-26T17:36:43Z
