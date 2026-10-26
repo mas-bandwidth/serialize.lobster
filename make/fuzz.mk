@@ -26,6 +26,8 @@ FUZZ_DRIVER  := $(FUZZ_STAGE)/fuzz_driver.lobster
 FUZZ_WORK    := $(FUZZ_BUILD)/work
 FUZZ_NORANGE := $(FUZZ_BUILD)/stage-norange
 FUZZ_REASON  := $(FUZZ_BUILD)/stage-reason
+FUZZ_FRAC    := $(FUZZ_BUILD)/stage-fraction
+FUZZ_HIGHGRP := $(FUZZ_BUILD)/stage-highgroup
 FUZZ_FAILURES := $(FUZZ_BUILD)/failures
 
 FUZZ_SEED     ?=
@@ -105,4 +107,52 @@ fuzz: fuzz-run
 		echo "reason negative control went red for the wrong reason (see build/fuzz/reason.log)"; exit 1; \
 	else \
 		echo "reason negative control: RED as expected (refusal reason mismatch; see build/fuzz/reason.log)"; \
+	fi
+	@echo "c-fraction negative control: the C oracle perturbs fraction_bits on a fractional fixed field"
+	@if $(FUZZ_HOST) --lobster $(LOBSTER) --driver $(FUZZ_DRIVER) --tmp $(FUZZ_WORK) \
+		--corrupt-fraction-control >$(FUZZ_BUILD)/c-fraction.log 2>&1; then \
+		echo "c-fraction negative control DID NOT go red"; exit 1; \
+	elif ! grep -q 'write bytes differ' $(FUZZ_BUILD)/c-fraction.log || \
+		! grep -q -- '--- FAIL TestDifferentialAgainstSerializeC' $(FUZZ_BUILD)/c-fraction.log; then \
+		echo "c-fraction negative control went red for the wrong reason (see build/fuzz/c-fraction.log)"; exit 1; \
+	else \
+		echo "c-fraction negative control: RED as expected (write bytes differ; see build/fuzz/c-fraction.log)"; \
+	fi
+	@echo "lobster-fraction negative control: the Lobster oracle ignores fraction_bits"
+	@rm -rf $(FUZZ_FRAC) && cp -r $(FUZZ_STAGE) $(FUZZ_FRAC)
+	@sed -i 's/return serialize_fixed_shl128(serialize_fixed_from_int64(whole), fraction_bits)/return serialize_fixed_shl128(serialize_fixed_from_int64(whole), 0)/' $(FUZZ_FRAC)/serialize_fixed.lobster
+	@grep -q 'serialize_fixed_from_int64(whole), 0' $(FUZZ_FRAC)/serialize_fixed.lobster || \
+		{ echo "lobster-fraction negative control: the sabotage needle no longer matches"; exit 1; }
+	@if $(FUZZ_HOST) --lobster $(LOBSTER) --driver $(FUZZ_FRAC)/fuzz_driver.lobster --tmp $(FUZZ_WORK) \
+		>$(FUZZ_BUILD)/lobster-fraction.log 2>&1; then \
+		echo "lobster-fraction negative control DID NOT go red"; exit 1; \
+	elif ! grep -q 'Lobster writer failed' $(FUZZ_BUILD)/lobster-fraction.log || \
+		! grep -q -- '--- FAIL TestDifferentialAgainstSerializeC' $(FUZZ_BUILD)/lobster-fraction.log; then \
+		echo "lobster-fraction negative control went red for the wrong reason (see build/fuzz/lobster-fraction.log)"; exit 1; \
+	else \
+		echo "lobster-fraction negative control: RED as expected (Lobster writer failed; see build/fuzz/lobster-fraction.log)"; \
+	fi
+	@echo "c-high-group negative control: the C oracle corrupts group 2 of a wide fixed128 field"
+	@if $(FUZZ_HOST) --lobster $(LOBSTER) --driver $(FUZZ_DRIVER) --tmp $(FUZZ_WORK) \
+		--corrupt-high-group-control >$(FUZZ_BUILD)/c-high-group.log 2>&1; then \
+		echo "c-high-group negative control DID NOT go red"; exit 1; \
+	elif ! grep -q 'write bytes differ' $(FUZZ_BUILD)/c-high-group.log || \
+		! grep -q -- '--- FAIL TestDifferentialAgainstSerializeC' $(FUZZ_BUILD)/c-high-group.log; then \
+		echo "c-high-group negative control went red for the wrong reason (see build/fuzz/c-high-group.log)"; exit 1; \
+	else \
+		echo "c-high-group negative control: RED as expected (write bytes differ; see build/fuzz/c-high-group.log)"; \
+	fi
+	@echo "lobster-high-group negative control: the Lobster oracle corrupts group 2 of a wide fixed128 field"
+	@rm -rf $(FUZZ_HIGHGRP) && cp -r $(FUZZ_STAGE) $(FUZZ_HIGHGRP)
+	@sed -i 's/case 2: return v.hi & 0xFFFFFFFF/case 2: return (v.hi ^ 1) \& 0xFFFFFFFF/' $(FUZZ_HIGHGRP)/serialize_fixed.lobster
+	@grep -q 'case 2: return (v.hi ^ 1) & 0xFFFFFFFF' $(FUZZ_HIGHGRP)/serialize_fixed.lobster || \
+		{ echo "lobster-high-group negative control: the sabotage needle no longer matches"; exit 1; }
+	@if $(FUZZ_HOST) --lobster $(LOBSTER) --driver $(FUZZ_HIGHGRP)/fuzz_driver.lobster --tmp $(FUZZ_WORK) \
+		>$(FUZZ_BUILD)/lobster-high-group.log 2>&1; then \
+		echo "lobster-high-group negative control DID NOT go red"; exit 1; \
+	elif ! grep -q 'write bytes differ' $(FUZZ_BUILD)/lobster-high-group.log || \
+		! grep -q -- '--- FAIL TestDifferentialAgainstSerializeC' $(FUZZ_BUILD)/lobster-high-group.log; then \
+		echo "lobster-high-group negative control went red for the wrong reason (see build/fuzz/lobster-high-group.log)"; exit 1; \
+	else \
+		echo "lobster-high-group negative control: RED as expected (write bytes differ; see build/fuzz/lobster-high-group.log)"; \
 	fi
