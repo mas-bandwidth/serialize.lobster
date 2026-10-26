@@ -1,0 +1,4 @@
+seed 0x9e3779b97f4a7c15
+failing batch: programs 0..99
+reproduce: make fuzz-run FUZZ_SEED=0x9e3779b97f4a7c15 FUZZ_PROGRAMS=100 (with --corrupt-fraction-control)
+batch.txt is the batch the Lobster child read; result.txt is what it wrote.

@@ -1,0 +1,66 @@
+# command: make controls
+# cwd: /home/nova/rowan-working/tmp/slots/ser-verify-lobster-fractional-fixed-differential.w2.g1.e1/jobs/ser-verify-lobster-fractional-fixed-differential.w2/repo
+# started: 2026-10-26T17:36:42Z
+RUN Controlalign-padding
+    control align-padding: red on exactly its 12 expected vectors of 397
+--- PASS Controlalign-padding
+RUN Controlcompressed-float-finite
+    control compressed-float-finite: red on exactly its 1 expected vectors of 397
+--- PASS Controlcompressed-float-finite
+RUN Controldouble-finite
+    control double-finite: red on exactly its 8 expected vectors of 397
+--- PASS Controldouble-finite
+RUN Controlend-padding
+    control end-padding: red on exactly its 3 expected vectors of 397
+--- PASS Controlend-padding
+RUN Controlend-trailing-data
+    control end-trailing-data: red on exactly its 6 expected vectors of 397
+--- PASS Controlend-trailing-data
+RUN Controlfixed-degenerate-terminal
+    control fixed-degenerate-terminal: red on exactly its 1 expected vectors of 397
+--- PASS Controlfixed-degenerate-terminal
+RUN Controlfloat-finite
+    control float-finite: red on exactly its 8 expected vectors of 397
+--- PASS Controlfloat-finite
+RUN Controlint64-through-double
+    control int64-through-double: red on exactly its 5 expected vectors of 397
+--- PASS Controlint64-through-double
+RUN Controlint-relative-canonical
+    control int-relative-canonical: red on exactly its 2 expected vectors of 397
+--- PASS Controlint-relative-canonical
+RUN Controlranged-range
+    control ranged-range: red on exactly its 20 expected vectors of 397
+--- PASS Controlranged-range
+RUN Controlranged-reconstruction
+    control ranged-reconstruction: red on exactly its 22 expected vectors of 397
+--- PASS Controlranged-reconstruction
+RUN Controlstring-embedded-nul
+    control string-embedded-nul: red on exactly its 5 expected vectors of 397
+--- PASS Controlstring-embedded-nul
+RUN Controlstring-utf8
+    control string-utf8: red on exactly its 13 expected vectors of 397
+--- PASS Controlstring-utf8
+RUN Controlstring-utf8-surrogate
+    control string-utf8-surrogate: red on exactly its 2 expected vectors of 397
+--- PASS Controlstring-utf8-surrogate
+RUN Controlwrong-reason
+    control wrong-reason: red on exactly its 5 expected vectors of 397
+--- PASS Controlwrong-reason
+RUN ControlUnsabotaged
+    an unsabotaged reader fails the align-padding control, as required
+--- PASS ControlUnsabotaged
+RUN Witnessfloat-write-finite
+    TestSerializeFloat goes red with the old behaviour planted back
+--- PASS Witnessfloat-write-finite
+RUN Witnessdouble-write-finite
+    TestSerializeFloat goes red with the old behaviour planted back
+--- PASS Witnessdouble-write-finite
+RUN Witnesscompressed-float-write-top
+    TestSerializeFloatCompressedNonFiniteTopAbort goes red with the old behaviour planted back
+--- PASS Witnesscompressed-float-write-top
+RUN Witnessfirst-reason-latch
+    TestSmoke goes red with the old behaviour planted back
+--- PASS Witnessfirst-reason-latch
+ok 20 controls
+# exit status: 0
+# finished: 2026-10-26T17:36:43Z

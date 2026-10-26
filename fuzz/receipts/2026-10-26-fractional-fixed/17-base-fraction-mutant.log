@@ -1,0 +1,11 @@
+# command (in the BASE tree): build/fuzz/host --lobster <dist>/lobster-v2026.8/bin/lobster --driver build/fuzz/stage-frac/fuzz_driver.lobster --tmp build/fuzz/work --seed 0x9e3779b97f4a7c15 --programs 2000
+# the sabotage: the Lobster oracle ignores fraction_bits (one line of src/serialize_fixed.lobster)
+# cwd: /home/nova/rowan-working/tmp/slots/ser-verify-lobster-fractional-fixed-differential.w2.g1.e1/jobs/ser-verify-lobster-fractional-fixed-differential.w2/.work/base-tree
+# started: 2026-10-26T17:37:55Z
+RUN TestDifferentialAgainstSerializeC
+seed 0x9e3779b97f4a7c15 programs 2000 duration 0s
+--- PASS TestDifferentialAgainstSerializeC: 2000 programs, 495 mutants (219 targeted at ranged offsets, float exponents and string bytes); mutants refused by reason: past_end 76 value_out_of_range 147 nonzero_padding 5 trailing_data 117 non_finite_float 50 invalid_utf8 17 embedded_nul 10
+# exit status: 0
+# finished: 2026-10-26T17:37:56Z
+# (exit 0 = the differential stayed green: the BASE cannot see a
+#  fractional defect, so the card's DONE-WHEN is red at BASE)

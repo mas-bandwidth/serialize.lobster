@@ -1,0 +1,12 @@
+RUN TestDifferentialAgainstSerializeC
+seed 0x9e3779b97f4a7c15 programs 2000 duration 0s
+program 5: write bytes differ
+program 5 (4 ops)
+  op 0 int -852 852 511
+  op 1 double 800456f3129d0de5
+  op 2 align
+  op 3 end
+  C:       5355ded029316f450008
+  Lobster: 532d6fe89498b7220004
+failing batch: programs 0..99, seed 0x9e3779b97f4a7c15; reproduce with --seed 0x9e3779b97f4a7c15 --programs 100
+--- FAIL TestDifferentialAgainstSerializeC (seed 0x9e3779b97f4a7c15)

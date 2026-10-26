@@ -139,9 +139,16 @@ typedef struct {
    - zero and nonzero fraction_bits across valid storage widths (8/16/32/64/128)
    - degenerate ranges (min == max, 0 encoded bits)
    - signed bounds at and one step within representable extremes
-   - encoded widths immediately below/at/above 32/64/96/128-bit group boundaries
-     where each storage permits (31/32 for fixed32; 31/32/33 and 63/64 for
-     fixed64; 31/32/33, 63/64/65, 95/96/97, and 127/128 for fixed128). */
+   - the integer/fraction split at and around the 32-bit group boundaries of the
+     storage, where each storage permits.  The widths the tables use are:
+     fixed32 (storage 8/16/32): integer bits 1/2/4/5/8/9/16/32, fraction bits
+     0/3/4/7/8/16/30/31; fixed64 (storage 8/16/32/64): integer bits
+     1/2/5/8/9/16/32/48/64, fraction bits 0/3/7/16/32/62/63; fixed128
+     (storage 128): integer bits 1/2/32/64/80/96/112/128, fraction bits
+     0/16/32/48/64/96/126/127.  So the split sits at a 32-bit group boundary
+     (integer 32/64/96/128, fraction 32/64/96), one group plus a part of the
+     next (integer 80/112, fraction 48), or one step below the whole storage
+     (fraction 30/31/62/63/126/127, integer 1/2). */
 static const FixedSpec FIXED32_SPECS[] = {
     { 8, 0, -128, 127 },
     { 8, 0, -127, 126 },

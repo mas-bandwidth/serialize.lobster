@@ -1,0 +1,21 @@
+RUN TestDifferentialAgainstSerializeC
+seed 0x9e3779b97f4a7c15 programs 2000 duration 0s
+mutant: refusal reason mismatch (C embedded_nul, Lobster invalid_utf8)
+program 60 (14 ops)
+  op 0 bytes 13 0103b7498d7e8aa6caa0458c57
+  op 1 bytes 15 0c6ebb231e55b772c1f77e77c8b505
+  op 2 bytes 15 78080f5c3129b5b1d4b3fef995c69e
+  op 3 cfloat 00000000 42c80000 3f000000 423ae148
+  op 4 bool 0
+  op 5 bits 2 3
+  op 6 fixed64 64 0 -4611686018427387904 4611686018427387904 -4611686018427387903
+  op 7 fixed64 48 16 -70368744177664 70368744177663 4611686018427322367
+  op 8 int128 -392056 392056 0 ffffffffffff9468
+  op 9 align
+  op 10 string 64 435a57545354
+  op 11 int_rel 480562 655371
+  op 12 uint16 13614
+  op 13 end
+  mutant: 0103b7498d7e8aa6caa0458c570c6ebb231e55b772c1f77e77c8b50578080f5c3129b5b1d4b3fef995c69e5d0e00000000000000f8fff7ffffffffff833f1606005a57545354c0028002804b0d
+failing batch: programs 0..99, seed 0x9e3779b97f4a7c15; reproduce with --seed 0x9e3779b97f4a7c15 --programs 100
+--- FAIL TestDifferentialAgainstSerializeC (seed 0x9e3779b97f4a7c15)

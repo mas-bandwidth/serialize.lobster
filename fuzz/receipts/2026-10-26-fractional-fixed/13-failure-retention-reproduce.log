@@ -1,0 +1,44 @@
+# command (the REPRODUCE.txt line, with the host run directly so the
+# --corrupt-fraction-control flag is on it):
+#   build/fuzz/host --lobster <dist>/lobster-v2026.8/bin/lobster --driver <build>/fuzz/stage/fuzz_driver.lobster --tmp <build>/fuzz/work --failures <receipt>/artifacts/failure-witness-2 --corrupt-fraction-control --seed 0x9e3779b97f4a7c15 --programs 100
+# cwd: /home/nova/rowan-working/tmp/slots/ser-verify-lobster-fractional-fixed-differential.w2.g1.e1/jobs/ser-verify-lobster-fractional-fixed-differential.w2/repo
+# REPRODUCE.txt:
+seed 0x9e3779b97f4a7c15
+failing batch: programs 0..99
+reproduce: make fuzz-run FUZZ_SEED=0x9e3779b97f4a7c15 FUZZ_PROGRAMS=100 (with --corrupt-fraction-control)
+batch.txt is the batch the Lobster child read; result.txt is what it wrote.
+# started: 2026-10-26T17:37:51Z
+RUN TestDifferentialAgainstSerializeC
+seed 0x9e3779b97f4a7c15 programs 100 duration 0s
+program 0: write bytes differ
+program 0 (21 ops)
+  op 0 uint16 33260
+  op 1 uint128 0000000000000000 2c829abe1f4532e1
+  op 2 uint16 57078
+  op 3 object
+  op 4 fixed32 4 4 -5 -5 -80
+  op 5 int64 -9223372036854775808 9223372036854775807 3775962213208117092
+  op 6 bool 1
+  op 7 fixed32 16 0 -32768 32767 -32768
+  op 8 cfloat 00000000 42c80000 3f000000 42133333
+  op 9 fixed64 2 62 -1 0 -4611686018427387904
+  op 10 string 64 5348444c544644484357594e5748485842475647
+  op 11 bytes 13 1405c198568f7b701dfb0e4372
+  op 12 fixed32 16 0 -6232 9839 -6232
+  op 13 fixed32 8 8 -127 126 -32512
+  op 14 object
+  op 15 cfloat c0000000 40000000 3c23d70a 3f68a71c
+  op 16 int_rel 2147483421 2147483647
+  op 17 int64 -506127 506127 -398100
+  op 18 string 64 4844564c5556
+  op 19 int128 -9223372036854775808 9223372036854775807 0 3505b7796bd1a506
+  op 20 end
+  C:       ec810000000000000000e132451fbe9a822cf6dea70240f61439089a6e461b0040090000000000000040015348444c544644484357594e57484858424756471405c198568f7b701dfb0e43720000c09f53011889caf64bc3004844564c555606a5d16b79b705b5
+  Lobster: ec810000000000000000e132451fbe9a822cf6dea70240f61439089a6e461b0040090000000000000040015348444c544644484357594e57484858424756471405c198568f7b701dfb0e4372000000c0a9008c4465fba561004844564c555606a5d16b79b705b5
+failing batch: programs 0..99, seed 0x9e3779b97f4a7c15; reproduce with --seed 0x9e3779b97f4a7c15 --programs 100
+failing inputs saved in /home/nova/rowan-working/tmp/slots/ser-verify-lobster-fractional-fixed-differential.w2.g1.e1/jobs/ser-verify-lobster-fractional-fixed-differential.w2/.work/receipt/artifacts/failure-witness-2
+--- FAIL TestDifferentialAgainstSerializeC (seed 0x9e3779b97f4a7c15)
+# exit status: 1
+# finished: 2026-10-26T17:37:51Z
+# the two retained batches are identical:
+identical

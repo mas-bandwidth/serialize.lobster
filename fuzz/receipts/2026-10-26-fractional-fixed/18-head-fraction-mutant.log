@@ -1,0 +1,71 @@
+# command (at HEAD): build/fuzz/host --lobster <dist>/lobster-v2026.8/bin/lobster --driver build/fuzz/stage-frac/fuzz_driver.lobster --tmp build/fuzz/work --seed 0x9e3779b97f4a7c15 --programs 2000
+# the same sabotage, the same seed, the same program count
+# cwd: /home/nova/rowan-working/tmp/slots/ser-verify-lobster-fractional-fixed-differential.w2.g1.e1/jobs/ser-verify-lobster-fractional-fixed-differential.w2/.work/../repo
+# started: 2026-10-26T17:37:56Z
+RUN TestDifferentialAgainstSerializeC
+seed 0x9e3779b97f4a7c15 programs 2000 duration 0s
+program 0: Lobster writer failed
+program 0 (21 ops)
+  op 0 uint16 33260
+  op 1 uint128 0000000000000000 2c829abe1f4532e1
+  op 2 uint16 57078
+  op 3 object
+  op 4 fixed32 4 4 -5 -5 -80
+  op 5 int64 -9223372036854775808 9223372036854775807 3775962213208117092
+  op 6 bool 1
+  op 7 fixed32 16 0 -32768 32767 -32768
+  op 8 cfloat 00000000 42c80000 3f000000 42133333
+  op 9 fixed64 2 62 -1 0 -4611686018427387904
+  op 10 string 64 5348444c544644484357594e5748485842475647
+  op 11 bytes 13 1405c198568f7b701dfb0e4372
+  op 12 fixed32 16 0 -6232 9839 -6232
+  op 13 fixed32 8 8 -127 126 -32512
+  op 14 object
+  op 15 cfloat c0000000 40000000 3c23d70a 3f68a71c
+  op 16 int_rel 2147483421 2147483647
+  op 17 int64 -506127 506127 -398100
+  op 18 string 64 4844564c5556
+  op 19 int128 -9223372036854775808 9223372036854775807 0 3505b7796bd1a506
+  op 20 end
+program 1: Lobster writer failed
+program 1 (16 ops)
+  op 0 object
+  op 1 double 8000000000000000
+  op 2 int128 -4611686018427387904 4611686018427387903 0 f65b15013741519b
+  op 3 cfloat_pre 200 8
+  op 4 float 52bf7e1e
+  op 5 bits64 56 008682f9a70fa9c0
+  op 6 cfloat_pre 400 9
+  op 7 string 64 42
+  op 8 fixed128 93 35 -3256001099472856039 3392200780068167618 7c07b8d1af5b0cc3 00000000f776d1b0
+  op 9 uint32 2714826685
+  op 10 bits 9 498
+  op 11 cfloat_pre 200 8
+  op 12 uint16 38324
+  op 13 fixed128 80 48 -140737488355328 140737488355327 b99bcf040786cf50 00000000434d6363
+  op 14 uint8 225
+  op 15 end
+program 2: Lobster writer failed
+program 2 (17 ops)
+  op 0 bits64 6 000000000000001b
+  op 1 align
+  op 2 fixed32 9 7 12 12 1536
+  op 3 int_rel 634409 759995
+  op 4 bytes 13 e1f6a99347aaeb522dfced899d
+  op 5 bytes 12 19a078eeba52cc28fb9c1f67
+  op 6 int_rel 502554 700015
+  op 7 bytes 10 f0e095ac95212e6cbda7
+  op 8 double 00093d31552b4f57
+  op 9 cfloat 00000000 42c80000 3f000000 423cc28f
+  op 10 fixed128 80 48 -140737488355328 140737488355328 ffff000000000000 000000007fffffff
+  op 11 uint32 556677096
+  op 12 bool 0
+  op 13 cfloat 00000000 42c80000 3f000000 41d570a3
+  op 14 uint8 58
+  op 15 int -55 -55 -55
+  op 16 end
+failing batch: programs 0..99, seed 0x9e3779b97f4a7c15; reproduce with --seed 0x9e3779b97f4a7c15 --programs 100
+--- FAIL TestDifferentialAgainstSerializeC (seed 0x9e3779b97f4a7c15)
+# exit status: 1
+# finished: 2026-10-26T17:37:56Z
+# (exit 1 = the differential went red on the fraction mutant: HEAD sees it)

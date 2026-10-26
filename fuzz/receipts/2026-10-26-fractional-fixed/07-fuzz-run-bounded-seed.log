@@ -1,0 +1,9 @@
+# command: make fuzz-run FUZZ_SEED=0xfeedfacecafebeef FUZZ_PROGRAMS=300
+# cwd: /home/nova/rowan-working/tmp/slots/ser-verify-lobster-fractional-fixed-differential.w2.g1.e1/jobs/ser-verify-lobster-fractional-fixed-differential.w2/repo
+# started: 2026-10-26T17:36:43Z
+cc -O2 -std=c99 -ffp-contract=off -Wall -Wextra -Werror -I/home/nova/rowan-working/tmp/slots/ser-verify-lobster-fractional-fixed-differential.w2.g1.e1/jobs/ser-verify-lobster-fractional-fixed-differential.w2/repo/.ref/serialize.c-v2.0.0 -o /home/nova/rowan-working/tmp/slots/ser-verify-lobster-fractional-fixed-differential.w2.g1.e1/jobs/ser-verify-lobster-fractional-fixed-differential.w2/repo/build/fuzz/host fuzz/host.c
+RUN TestDifferentialAgainstSerializeC
+seed 0xfeedfacecafebeef programs 300 duration 0s
+--- PASS TestDifferentialAgainstSerializeC: 300 programs, 74 mutants (36 targeted at ranged offsets, float exponents and string bytes); mutants refused by reason: past_end 15 value_out_of_range 23 nonzero_padding 1 trailing_data 15 non_finite_float 8 invalid_utf8 3 embedded_nul 2
+# exit status: 0
+# finished: 2026-10-26T17:36:45Z
