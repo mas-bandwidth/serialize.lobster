@@ -98,10 +98,10 @@ def serialize(o::fz_object, s) -> bool:
     return s.ok()
 
 // ---------------------------------------------------------------------------
-// write
+// write and measure
 // ---------------------------------------------------------------------------
 
-def fz_write(s:serialize_write_stream, line:string) -> bool:
+def fz_write(s, line:string) -> bool:
     let t = tokenize(line, " ", "")
     let kind = t[0]
     var ok = true
@@ -193,15 +193,18 @@ def fz_write(s:serialize_write_stream, line:string) -> bool:
         assert false
     return ok
 
-def fz_run_write(ops:[string]) -> string, bool:
+def fz_run_write(ops:[string]) -> string, bool, int, int, int:
     let w = serialize_write_stream(ensure_size(string_with_capacity(fz_bufcap), fz_bufcap, 0))
+    let m = serialize_measure_stream()
     var ok = true
     for(ops) line:
         if not ok:
             break
-        ok = fz_write(w, line)
+        let wok = fz_write(w, line)
+        let mok = fz_write(m, line)
+        ok = wok and mok
     w.flush()
-    return fz_hex_buf(w.buffer, w.bytes_processed()), ok and w.ok()
+    return fz_hex_buf(w.buffer, w.bytes_processed()), ok and w.ok() and m.ok(), w.bits_processed(), m.bits_processed(), m.bytes_processed()
 
 // ---------------------------------------------------------------------------
 // read
@@ -342,21 +345,47 @@ def fz_read(s:serialize_read_stream, line:string) -> bool, [string]:
         assert false
     return ok, toks
 
+def fz_check_terminal(r:serialize_read_stream, reason:string) -> bool:
+    let b0 = r.bits_processed()
+    if not r.failed or r.refusal_name() != reason:
+        return false
+    var v32 = 0x13572468
+    var ok32 = false
+    v32, ok32 = r.serialize_fixed32(v32, 16, 16, -5, -5)
+    if ok32 or v32 != 0x13572468 or not r.failed or r.refusal_name() != reason or r.bits_processed() != b0:
+        return false
+    var v64 = 0x1357246824681357
+    var ok64 = false
+    v64, ok64 = r.serialize_fixed64(v64, 32, 32, -10, 10)
+    if ok64 or v64 != 0x1357246824681357 or not r.failed or r.refusal_name() != reason or r.bits_processed() != b0:
+        return false
+    var v128 = serialize_int128_make(0x5555666677778888, 0x1111222233334444)
+    var ok128 = false
+    v128, ok128 = r.serialize_fixed128(v128, 64, 64, -10, 10)
+    if ok128 or v128.lo != 0x1111222233334444 or v128.hi != 0x5555666677778888 or not r.failed or r.refusal_name() != reason or r.bits_processed() != b0:
+        return false
+    return true
+
 def fz_run_read(bytes:string, ops:[string], id:int, src:string) -> string:
     let r = serialize_read_stream_padded(bytes)
     var acc = true
     var step = length(ops)
+    var consumed = 0
+    var term = true
     var body = ""
     for(ops) line, i:
         let ok, toks = fz_read(r, line)
         if not ok:
             acc = false
             step = i
+            term = fz_check_terminal(r, r.refusal_name())
             break
+        consumed = r.bits_processed()
         if length(toks) > 0:
             body += "V " + string(id) + " " + src + " " + string(i) + " " + fz_join(toks) + "\n"
     let accint = if acc: "1" else: "0"
-    return "R " + string(id) + " " + src + " " + accint + " " + string(step) + " " + r.refusal_name() + "\n" + body
+    let termint = if term: "1" else: "0"
+    return "R " + string(id) + " " + src + " " + accint + " " + string(step) + " " + r.refusal_name() + " " + string(consumed) + " " + termint + "\n" + body
 
 def fz_main():
     let args = command_line_arguments()
@@ -392,8 +421,8 @@ def fz_main():
             ops.push(lines[i + 1 + k])
         i += 1 + nops
 
-        let wbytes, wok = fz_run_write(ops)
-        out += "W " + string(id) + " " + wbytes + " " + (if wok: "1" else: "0") + "\n"
+        let wbytes, wok, wbits, mbits, mbytes_cnt = fz_run_write(ops)
+        out += "W " + string(id) + " " + wbytes + " " + (if wok: "1" else: "0") + " " + string(wbits) + " " + string(mbits) + " " + string(mbytes_cnt) + "\n"
         out += fz_run_read(cbytes, ops, id, "c")
         if has_mutant:
             out += fz_run_read(mbytes, ops, id, "m")

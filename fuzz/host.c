@@ -64,6 +64,7 @@ enum {
 typedef struct {
     int kind;
     int bits;
+    int frac;
     uint64_t u, u2, u3;
     int64_t s, min, max;
     int32_t i1, i2, i3;
@@ -81,6 +82,9 @@ typedef struct {
     Op ops[MAXOPS + 1];
     unsigned char bytes[BUFCAP];
     int nbytes;
+    int64_t wbits;
+    int64_t mbits;
+    int64_t mbytes;
     unsigned char mutant[BUFCAP + 8];
     int nmutant;
     int has_mutant;
@@ -92,12 +96,15 @@ typedef struct {
     int rkind[MAXOPS + 1];
     int rstart[MAXOPS + 1];
     int rwidth[MAXOPS + 1];
-    uint64_t rtarget[MAXOPS + 1];
+    serialize_uint128_t rtarget[MAXOPS + 1];
 } Program;
 
 /* ---------------------------------------------------------------- RNG --- */
 
 static uint64_t rng_state = DEFAULT_SEED;
+static uint32_t fixed32_seq = 0;
+static uint32_t fixed64_seq = 0;
+static uint32_t fixed128_seq = 0;
 static uint64_t rng_next(void) {
     uint64_t z = (rng_state += 0x9e3779b97f4a7c15ULL);
     z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ULL;
@@ -120,6 +127,164 @@ static uint32_t f32_bits(float f) { uint32_t u; memcpy(&u, &f, 4); return u; }
 static double f64_from_bits(uint64_t u) { double d; memcpy(&d, &u, 8); return d; }
 
 /* ---------------------------------------------------------- generator --- */
+
+typedef struct {
+    int integer_bits;
+    int fraction_bits;
+    int64_t min;
+    int64_t max;
+} FixedSpec;
+
+/* Compact pairwise matrices for fixed32, fixed64, and fixed128:
+   - zero and nonzero fraction_bits across valid storage widths (8/16/32/64/128)
+   - degenerate ranges (min == max, 0 encoded bits)
+   - signed bounds at and one step within representable extremes
+   - the integer/fraction split at and around the 32-bit group boundaries of the
+     storage, where each storage permits.  The widths the tables use are:
+     fixed32 (storage 8/16/32): integer bits 1/2/4/5/8/9/16/32, fraction bits
+     0/3/4/7/8/16/30/31; fixed64 (storage 8/16/32/64): integer bits
+     1/2/5/8/9/16/32/48/64, fraction bits 0/3/7/16/32/62/63; fixed128
+     (storage 128): integer bits 1/2/32/64/80/96/112/128, fraction bits
+     0/16/32/48/64/96/126/127.  So the split sits at a 32-bit group boundary
+     (integer 32/64/96/128, fraction 32/64/96), one group plus a part of the
+     next (integer 80/112, fraction 48), or one step below the whole storage
+     (fraction 30/31/62/63/126/127, integer 1/2). */
+static const FixedSpec FIXED32_SPECS[] = {
+    { 8, 0, -128, 127 },
+    { 8, 0, -127, 126 },
+    { 5, 3, -16, 15 },
+    { 5, 3, -15, 14 },
+    { 4, 4, -5, -5 },
+    { 16, 0, -32768, 32767 },
+    { 8, 8, -128, 127 },
+    { 8, 8, -127, 126 },
+    { 9, 7, 12, 12 },
+    { 32, 0, -2147483647LL - 1, 2147483647LL },
+    { 32, 0, -2147483647LL, 2147483646LL },
+    { 32, 0, -1073741824LL, 1073741823LL },
+    { 32, 0, -1073741824LL, 1073741824LL },
+    { 16, 16, -16384, 16383 },
+    { 16, 16, -32768, 32767 },
+    { 16, 16, -32767, 32766 },
+    { 2, 30, -1, 0 },
+    { 1, 31, -1, 0 },
+    { 16, 16, -32768, -32768 }
+};
+#define N_FIXED32_SPECS ((uint32_t)(sizeof(FIXED32_SPECS) / sizeof(FIXED32_SPECS[0])))
+
+static const FixedSpec FIXED64_SPECS[] = {
+    { 8, 0, -128, 127 },
+    { 5, 3, -16, 15 },
+    { 16, 0, -32768, 32767 },
+    { 9, 7, -256, 255 },
+    { 32, 0, -2147483648LL, 2147483647LL },
+    { 16, 16, -16384, 16383 },
+    { 16, 16, -32768, 32767 },
+    { 64, 0, -1073741824LL, 1073741823LL },
+    { 64, 0, -2147483648LL, 2147483647LL },
+    { 64, 0, -2147483648LL, 2147483648LL },
+    { 48, 16, -16384, 16383 },
+    { 48, 16, -32768, 32767 },
+    { 48, 16, -32768, 32768 },
+    { 64, 0, -(1LL << 62), (1LL << 62) - 1 },
+    { 64, 0, INT64_MIN, INT64_MAX },
+    { 64, 0, INT64_MIN + 1, INT64_MAX - 1 },
+    { 64, 0, -(1LL << 62), 1LL << 62 },
+    { 48, 16, -(1LL << 46), (1LL << 46) - 1 },
+    { 48, 16, -(1LL << 47), (1LL << 47) - 1 },
+    { 48, 16, -(1LL << 47) + 1, (1LL << 47) - 2 },
+    { 32, 32, -(1LL << 31), (1LL << 31) - 1 },
+    { 2, 62, -1, 0 },
+    { 1, 63, -1, 0 },
+    { 32, 32, -42, -42 },
+    { 48, 16, -(1LL << 47), -(1LL << 47) }
+};
+#define N_FIXED64_SPECS ((uint32_t)(sizeof(FIXED64_SPECS) / sizeof(FIXED64_SPECS[0])))
+
+static const FixedSpec FIXED128_SPECS[] = {
+    { 128, 0, 0, 0 },
+    { 64, 64, INT64_MIN, INT64_MIN },
+    { 128, 0, -(1LL << 30), (1LL << 30) - 1 },
+    { 128, 0, -(1LL << 31), (1LL << 31) - 1 },
+    { 128, 0, -(1LL << 31), 1LL << 31 },
+    { 112, 16, -16384, 16383 },
+    { 112, 16, -32768, 32767 },
+    { 112, 16, -32768, 32768 },
+    { 128, 0, -(1LL << 62), (1LL << 62) - 1 },
+    { 128, 0, INT64_MIN, INT64_MAX },
+    { 128, 0, INT64_MIN + 1, INT64_MAX - 1 },
+    { 112, 16, -(1LL << 46), (1LL << 46) - 1 },
+    { 112, 16, -(1LL << 47), (1LL << 47) - 1 },
+    { 112, 16, -(1LL << 47), 1LL << 47 },
+    { 96, 32, -(1LL << 31), 1LL << 31 },
+    { 80, 48, -(1LL << 46), (1LL << 46) - 1 },
+    { 80, 48, -(1LL << 47), (1LL << 47) - 1 },
+    { 80, 48, -(1LL << 47), 1LL << 47 },
+    { 64, 64, -(1LL << 30), (1LL << 30) - 1 },
+    { 64, 64, -(1LL << 31), (1LL << 31) - 1 },
+    { 64, 64, -(1LL << 31), 1LL << 31 },
+    { 64, 64, -(1LL << 62), (1LL << 62) - 1 },
+    { 64, 64, INT64_MIN, INT64_MAX },
+    { 64, 64, INT64_MIN + 1, INT64_MAX - 1 },
+    { 64, 64, -(1LL << 62), 1LL << 62 },
+    { 32, 96, -(1LL << 30), (1LL << 30) - 1 },
+    { 32, 96, -(1LL << 31), (1LL << 31) - 1 },
+    { 32, 96, -(1LL << 31) + 1, (1LL << 31) - 2 },
+    { 2, 126, -1, 0 },
+    { 1, 127, -1, 0 }
+};
+#define N_FIXED128_SPECS ((uint32_t)(sizeof(FIXED128_SPECS) / sizeof(FIXED128_SPECS[0])))
+
+static serialize_uint128_t pick_fixed_raw_value(int fraction_bits, int64_t min, int64_t max, uint32_t mode) {
+    serialize_uint128_t raw_min = serialize_raw_bound(min, fraction_bits);
+    serialize_uint128_t raw_max = serialize_raw_bound(max, fraction_bits);
+    serialize_uint128_t span = serialize_u128_sub(raw_max, raw_min);
+    if (span.lo == 0 && span.hi == 0) return raw_min;
+    serialize_uint128_t offset;
+    switch (mode % 8) {
+    case 0:
+        offset = serialize_uint128_make(0, 0);
+        break;
+    case 1:
+        offset = serialize_uint128_make(0, 1);
+        break;
+    case 2:
+        offset = serialize_u128_sub(span, serialize_uint128_make(0, 1));
+        break;
+    case 3:
+        offset = span;
+        break;
+    case 4: {
+        serialize_uint128_t step = serialize_raw_bound(1, fraction_bits);
+        offset = (serialize_u128_compare(step, span) <= 0) ? step : span;
+        break;
+    }
+    case 5: {
+        serialize_uint128_t step = serialize_raw_bound(1, fraction_bits);
+        offset = (serialize_u128_compare(step, span) <= 0)
+            ? serialize_u128_sub(span, step)
+            : serialize_uint128_make(span.hi >> 1, (span.lo >> 1) | (span.hi << 63));
+        break;
+    }
+    default: {
+        uint64_t rhi = (span.hi == 0) ? 0 : ((span.hi == ~0ULL) ? rng_next() : (rng_next() % (span.hi + 1)));
+        uint64_t rlo = (rhi < span.hi) ? rng_next() : ((span.lo == ~0ULL) ? rng_next() : (rng_next() % (span.lo + 1)));
+        offset = serialize_uint128_make(rhi, rlo);
+        break;
+    }
+    }
+    return serialize_u128_add(raw_min, offset);
+}
+
+static void gen_random_fixed_spec(int st, FixedSpec *sp) {
+    sp->fraction_bits = (int)rnd((uint32_t)st);
+    sp->integer_bits = st - sp->fraction_bits;
+    int64_t imin = (sp->integer_bits >= 64) ? -(1LL << 62) : -(1LL << (sp->integer_bits - 1));
+    int64_t imax = (sp->integer_bits >= 64) ? ((1LL << 62) - 1) : ((1LL << (sp->integer_bits - 1)) - 1);
+    sp->min = rnd_i64_range(imin, imax);
+    sp->max = rnd_i64_range(imin, imax);
+    if (sp->min > sp->max) { int64_t t = sp->min; sp->min = sp->max; sp->max = t; }
+}
 
 static void gen_op(Op *o) {
     memset(o, 0, sizeof(*o));
@@ -212,36 +377,57 @@ static void gen_op(Op *o) {
         break;
     }
     case OP_FIXED32: {
-        int32_t r = (int32_t)(1 + rnd(10000));
-        o->bits = 32;
-        o->min = rnd(3) == 0 ? 5 : -r;
-        o->max = rnd(3) == 0 ? 5 : r;
-        /* min 5 with max r < 5 is an empty range: swap it (the fixed seed
-           never draws one; the nightly's first random seed did) */
-        if (o->min > o->max) { int64_t t = o->min; o->min = o->max; o->max = t; }
-        o->s = rnd_i32_range((int32_t)o->min, (int32_t)o->max);
+        uint32_t seq = fixed32_seq++;
+        FixedSpec sp;
+        if (seq >= N_FIXED32_SPECS * 4 && rnd(4) == 0) {
+            static const int s32[3] = { 8, 16, 32 };
+            gen_random_fixed_spec(s32[rnd(3)], &sp);
+        } else {
+            sp = FIXED32_SPECS[seq % N_FIXED32_SPECS];
+        }
+        uint32_t mode = (seq / N_FIXED32_SPECS) + rnd(2);
+        serialize_uint128_t raw = pick_fixed_raw_value(sp.fraction_bits, sp.min, sp.max, mode);
+        o->bits = sp.integer_bits;
+        o->frac = sp.fraction_bits;
+        o->min = sp.min;
+        o->max = sp.max;
+        o->s = (int64_t)(int32_t)(uint32_t)raw.lo;
         break;
     }
     case OP_FIXED64: {
-        int64_t r = (int64_t)(1 + rnd(1000000));
-        o->bits = 64;
-        o->min = rnd(3) == 0 ? -3 : -r;
-        o->max = rnd(3) == 0 ? -3 : r;
-        /* min -r with max -3, r < 3, is an empty range: swap it */
-        if (o->min > o->max) { int64_t t = o->min; o->min = o->max; o->max = t; }
-        o->s = rnd_i64_range(o->min, o->max);
+        uint32_t seq = fixed64_seq++;
+        FixedSpec sp;
+        if (seq >= N_FIXED64_SPECS * 4 && rnd(4) == 0) {
+            static const int s64[4] = { 8, 16, 32, 64 };
+            gen_random_fixed_spec(s64[rnd(4)], &sp);
+        } else {
+            sp = FIXED64_SPECS[seq % N_FIXED64_SPECS];
+        }
+        uint32_t mode = (seq / N_FIXED64_SPECS) + rnd(2);
+        serialize_uint128_t raw = pick_fixed_raw_value(sp.fraction_bits, sp.min, sp.max, mode);
+        o->bits = sp.integer_bits;
+        o->frac = sp.fraction_bits;
+        o->min = sp.min;
+        o->max = sp.max;
+        o->s = (int64_t)raw.lo;
         break;
     }
     case OP_FIXED128: {
-        int c = (int)rnd(5);
-        int64_t r = (int64_t)(1 + rnd(1000000));
-        o->bits = 128;
-        if (c == 0) { o->min = o->max = rnd_i64_range(-1000, 1000); }
-        else if (c == 1) { o->min = -r; o->max = r; }
-        else if (c == 2) { o->min = INT64_MIN; o->max = INT64_MAX; }
-        else if (c == 3) { o->min = INT64_MIN / 2; o->max = INT64_MAX / 2; }
-        else { o->min = -r; o->max = r; }
-        o->s = rnd_i64_range(o->min, o->max);
+        uint32_t seq = fixed128_seq++;
+        FixedSpec sp;
+        if (seq >= N_FIXED128_SPECS * 4 && rnd(4) == 0) {
+            gen_random_fixed_spec(128, &sp);
+        } else {
+            sp = FIXED128_SPECS[seq % N_FIXED128_SPECS];
+        }
+        uint32_t mode = (seq / N_FIXED128_SPECS) + rnd(2);
+        serialize_uint128_t raw = pick_fixed_raw_value(sp.fraction_bits, sp.min, sp.max, mode);
+        o->bits = sp.integer_bits;
+        o->frac = sp.fraction_bits;
+        o->min = sp.min;
+        o->max = sp.max;
+        o->u = raw.lo;
+        o->u2 = raw.hi;
         break;
     }
     case OP_CFLOAT: {
@@ -287,24 +473,20 @@ static void gen_program(Program *p, int id) {
 
 /* ------------------------------------------------------------- writer --- */
 
-static int bit_length64(uint64_t v) {
-    int b = 0;
-    while (v) { b++; v >>= 1; }
-    return b;
-}
-
 /* Record a ranged field: its offset starts at bit bstart and spans width
    bits.  Only fields with a representable out-of-range offset are recorded
    (a full-width or degenerate span has none). */
-static void record_ranged(Program *p, int kind, uint64_t span, int64_t bstart) {
-    int bits = bit_length64(span);
-    if (bits == 0 || bits >= 64) return;
-    if (span + 1 >= (1ULL << bits)) return;
+static void record_ranged_u128(Program *p, int kind, serialize_uint128_t span, int64_t bstart) {
+    int bits = serialize_u128_bit_length(span);
+    if (bits == 0) return;
+    if (bits == 128 && span.hi == ~0ULL && span.lo == ~0ULL) return;
+    serialize_uint128_t target = serialize_u128_add(span, serialize_uint128_make(0, 1));
+    if (bits < 128 && serialize_u128_bit_length(target) > bits) return;
     if (p->nranged >= MAXOPS) return;
     p->rkind[p->nranged] = kind;
     p->rstart[p->nranged] = (int)bstart;
     p->rwidth[p->nranged] = bits;
-    p->rtarget[p->nranged] = span + 1;
+    p->rtarget[p->nranged] = target;
     p->nranged++;
 }
 
@@ -317,8 +499,52 @@ static void record_field(Program *p, int kind, int64_t bstart, int width, uint64
     p->rkind[p->nranged] = kind;
     p->rstart[p->nranged] = (int)bstart;
     p->rwidth[p->nranged] = width;
-    p->rtarget[p->nranged] = target;
+    p->rtarget[p->nranged] = serialize_uint128_make(0, target);
     p->nranged++;
+}
+
+static void measure_program(Program *p) {
+    serialize_measure_stream_t m;
+    serialize_measure_stream_init(&m);
+    for (int i = 0; i < p->nops; i++) {
+        Op *o = &p->ops[i];
+        switch (o->kind) {
+        case OP_BITS: serialize_measure_bits(&m, o->bits); break;
+        case OP_BITS64: serialize_measure_bits64(&m, o->bits); break;
+        case OP_BOOL: serialize_measure_bool(&m); break;
+        case OP_U8: serialize_measure_uint8(&m); break;
+        case OP_U16: serialize_measure_uint16(&m); break;
+        case OP_U32: serialize_measure_uint32(&m); break;
+        case OP_U64: serialize_measure_uint64(&m); break;
+        case OP_INT: serialize_measure_int(&m, (int32_t)o->min, (int32_t)o->max); break;
+        case OP_INT64: serialize_measure_int64(&m, o->min, o->max); break;
+        case OP_INT_REL: serialize_measure_int_relative(&m, o->i1, o->i2); break;
+        case OP_U128: serialize_measure_uint128(&m); break;
+        case OP_I128:
+            serialize_measure_int128(&m,
+                serialize_int128_make((serialize_uint64_t)(o->min < 0 ? ~0ULL : 0), (serialize_uint64_t)o->min),
+                serialize_int128_make((serialize_uint64_t)(o->max < 0 ? ~0ULL : 0), (serialize_uint64_t)o->max));
+            break;
+        case OP_FLOAT: serialize_measure_float(&m); break;
+        case OP_DOUBLE: serialize_measure_double(&m); break;
+        case OP_FIXED32: serialize_measure_fixed32(&m, o->bits, o->frac, (int32_t)o->min, (int32_t)o->max); break;
+        case OP_FIXED64: serialize_measure_fixed64(&m, o->bits, o->frac, o->min, o->max); break;
+        case OP_FIXED128: serialize_measure_fixed128(&m, o->bits, o->frac, o->min, o->max); break;
+        case OP_CFLOAT: serialize_measure_compressed_float(&m, o->f1, o->f2, o->f3); break;
+        case OP_CFLOAT_PRE: serialize_measure_compressed_float_precomputed(&m, o->cbits); break;
+        case OP_BYTES: serialize_measure_bytes(&m, o->len); break;
+        case OP_STRING: serialize_measure_string(&m, (const char *)o->buf, o->bufsize); break;
+        case OP_ALIGN: serialize_measure_align(&m); break;
+        case OP_END: serialize_measure_end(&m); break;
+        case OP_OBJECT:
+            serialize_measure_bool(&m);
+            serialize_measure_int(&m, 0, 7);
+            serialize_measure_uint16(&m);
+            break;
+        }
+    }
+    p->mbits = serialize_measure_bits_processed(&m);
+    p->mbytes = serialize_measure_bytes_processed(&m);
 }
 
 static int write_program(Program *p, unsigned char *buf, int cap, int widen, int *widen_done) {
@@ -338,7 +564,7 @@ static int write_program(Program *p, unsigned char *buf, int cap, int widen, int
         case OP_U64: serialize_write_uint64(&w, (uint64_t)o->u); break;
         case OP_INT: {
             int32_t mx = (int32_t)o->max;
-            if (widen && !*widen_done) {
+            if (widen == 1 && !*widen_done) {
                 int wid = serialize_bits_required((int32_t)o->min, (int32_t)o->max);
                 if (wid >= 1 && wid < 31 && o->max <= (int64_t)INT32_MAX - (1LL << wid)) {
                     mx = (int32_t)(o->max + (1LL << wid));
@@ -359,13 +585,51 @@ static int write_program(Program *p, unsigned char *buf, int cap, int widen, int
             break;
         case OP_FLOAT: serialize_write_float(&w, f32_from_bits((uint32_t)o->u)); break;
         case OP_DOUBLE: serialize_write_double(&w, f64_from_bits(o->u)); break;
-        case OP_FIXED32: serialize_write_fixed32(&w, (int32_t)o->s, o->bits, 0, (int32_t)o->min, (int32_t)o->max); break;
-        case OP_FIXED64: serialize_write_fixed64(&w, (int64_t)o->s, o->bits, 0, o->min, o->max); break;
-        case OP_FIXED128:
-            serialize_write_fixed128(&w,
-                serialize_int128_make((serialize_uint64_t)(o->s < 0 ? ~0ULL : 0), (serialize_uint64_t)o->s),
-                o->bits, 0, o->min, o->max);
+        case OP_FIXED32: {
+            int ibits = o->bits, fbits = o->frac;
+            if (widen == 2 && !*widen_done && fbits > 0 && ibits > 1 && o->min < 0 && o->max > 0) {
+                ibits -= 1;
+                fbits += 1;
+                *widen_done = 1;
+            }
+            serialize_write_fixed32(&w, (int32_t)o->s, ibits, fbits, (int32_t)o->min, (int32_t)o->max);
             break;
+        }
+        case OP_FIXED64: {
+            int ibits = o->bits, fbits = o->frac;
+            if (widen == 2 && !*widen_done && fbits > 0 && ibits > 1 && o->min < 0 && o->max > 0) {
+                ibits -= 1;
+                fbits += 1;
+                *widen_done = 1;
+            }
+            serialize_write_fixed64(&w, (int64_t)o->s, ibits, fbits, o->min, o->max);
+            break;
+        }
+        case OP_FIXED128: {
+            int ibits = o->bits, fbits = o->frac;
+            serialize_uint128_t raw_v = serialize_uint128_make(o->u2, o->u);
+            if (widen == 2 && !*widen_done && fbits > 0 && ibits > 1 && o->min < 0 && o->max > 0) {
+                ibits -= 1;
+                fbits += 1;
+                *widen_done = 1;
+            } else if (widen == 3 && !*widen_done) {
+                serialize_uint128_t rmin = serialize_raw_bound(o->min, fbits);
+                serialize_uint128_t rmax = serialize_raw_bound(o->max, fbits);
+                serialize_uint128_t span = serialize_u128_sub(rmax, rmin);
+                if (serialize_u128_bit_length(span) > 64) {
+                    serialize_uint128_t off = serialize_u128_sub(raw_v, rmin);
+                    serialize_uint128_t bad_off = serialize_uint128_make(off.hi ^ 1ULL, off.lo);
+                    if (serialize_u128_compare(bad_off, span) <= 0) {
+                        raw_v = serialize_u128_add(rmin, bad_off);
+                        *widen_done = 1;
+                    }
+                }
+            }
+            serialize_write_fixed128(&w,
+                serialize_int128_make(raw_v.hi, raw_v.lo),
+                ibits, fbits, o->min, o->max);
+            break;
+        }
         case OP_CFLOAT: serialize_write_compressed_float(&w, o->f4, o->f1, o->f2, o->f3); break;
         case OP_CFLOAT_PRE: serialize_write_compressed_float_precomputed(&w, o->f4, o->cmax, o->cbits, o->cdelta, o->f1); break;
         case OP_BYTES: serialize_write_bytes(&w, o->buf, o->len); break;
@@ -380,14 +644,18 @@ static int write_program(Program *p, unsigned char *buf, int cap, int widen, int
         }
         switch (o->kind) {
         case OP_INT:
-            record_ranged(p, o->kind, (uint32_t)o->max - (uint32_t)o->min, bstart);
-            break;
         case OP_INT64:
+        case OP_I128:
+            record_ranged_u128(p, o->kind,
+                serialize_u128_sub(serialize_raw_bound(o->max, 0), serialize_raw_bound(o->min, 0)),
+                bstart);
+            break;
         case OP_FIXED32:
         case OP_FIXED64:
         case OP_FIXED128:
-        case OP_I128:
-            record_ranged(p, o->kind, (uint64_t)o->max - (uint64_t)o->min, bstart);
+            record_ranged_u128(p, o->kind,
+                serialize_u128_sub(serialize_raw_bound(o->max, o->frac), serialize_raw_bound(o->min, o->frac)),
+                bstart);
             break;
         case OP_FLOAT:
             record_field(p, o->kind, bstart + 23, 8, 0xFF);
@@ -406,6 +674,8 @@ static int write_program(Program *p, unsigned char *buf, int cap, int widen, int
     }
     serialize_write_flush(&w);
     if (serialize_write_error(&w)) return -1;
+    p->wbits = serialize_write_bits_processed(&w);
+    measure_program(p);
     return (int)serialize_write_bytes_processed(&w);
 }
 
@@ -414,6 +684,8 @@ static int write_program(Program *p, unsigned char *buf, int cap, int widen, int
 typedef struct {
     int accept;
     int refstep;
+    int64_t rbits;
+    int term;
     char reason[32];
     int ntok[MAXOPS + 1];
     char tok[MAXOPS + 1][MAXTOK][TOKLEN];
@@ -430,6 +702,21 @@ static void tok_hexbytes(char *out, const unsigned char *p, int n) {
     out[2 * n] = 0;
 }
 
+static int check_terminal(serialize_read_stream_t *rd, serialize_refusal_t reason) {
+    serialize_int64_t b0 = serialize_read_bits_processed(rd);
+    if (!serialize_read_error(rd) || serialize_read_refusal(rd) != reason) return 0;
+    int32_t v32 = 0x13572468;
+    if (serialize_read_fixed32(rd, &v32, 16, 16, -5, -5) != 0) return 0;
+    if (v32 != 0x13572468 || !serialize_read_error(rd) || serialize_read_refusal(rd) != reason || serialize_read_bits_processed(rd) != b0) return 0;
+    int64_t v64 = 0x1357246824681357LL;
+    if (serialize_read_fixed64(rd, &v64, 32, 32, -10, 10) != 0) return 0;
+    if (v64 != 0x1357246824681357LL || !serialize_read_error(rd) || serialize_read_refusal(rd) != reason || serialize_read_bits_processed(rd) != b0) return 0;
+    serialize_int128_t v128 = serialize_int128_make(0x5555666677778888ULL, 0x1111222233334444ULL);
+    if (serialize_read_fixed128(rd, &v128, 64, 64, -10, 10) != 0) return 0;
+    if (v128.lo != 0x1111222233334444ULL || v128.hi != 0x5555666677778888ULL || !serialize_read_error(rd) || serialize_read_refusal(rd) != reason || serialize_read_bits_processed(rd) != b0) return 0;
+    return 1;
+}
+
 static int read_program(const unsigned char *bytes, int nbytes, Program *p, ReadResult *r) {
     unsigned char data[BUFCAP + 8];
     memset(data, 0, sizeof(data));
@@ -439,6 +726,7 @@ static int read_program(const unsigned char *bytes, int nbytes, Program *p, Read
     serialize_read_stream_init_padded(&rd, data, (int)sizeof(data), data, nbytes);
     memset(r, 0, sizeof(*r));
     r->refstep = p->nops;
+    r->term = 1;
     for (int i = 0; i < p->nops; i++) {
         Op *o = &p->ops[i];
         int ok = 0;
@@ -464,11 +752,11 @@ static int read_program(const unsigned char *bytes, int nbytes, Program *p, Read
         }
         case OP_FLOAT: { float v = 0; ok = serialize_read_float(&rd, &v); if (ok) snprintf(r->tok[i][0], TOKLEN, "%08" PRIx32, f32_bits(v)); break; }
         case OP_DOUBLE: { double v = 0; ok = serialize_read_double(&rd, &v); if (ok) { uint64_t b; memcpy(&b, &v, 8); tok_u64(r->tok[i][0], b); } break; }
-        case OP_FIXED32: { int32_t v = 0; ok = serialize_read_fixed32(&rd, &v, o->bits, 0, (int32_t)o->min, (int32_t)o->max); if (ok) tok_i64(r->tok[i][0], v); break; }
-        case OP_FIXED64: { int64_t v = 0; ok = serialize_read_fixed64(&rd, &v, o->bits, 0, o->min, o->max); if (ok) tok_i64(r->tok[i][0], v); break; }
+        case OP_FIXED32: { int32_t v = 0; ok = serialize_read_fixed32(&rd, &v, o->bits, o->frac, (int32_t)o->min, (int32_t)o->max); if (ok) tok_i64(r->tok[i][0], v); break; }
+        case OP_FIXED64: { int64_t v = 0; ok = serialize_read_fixed64(&rd, &v, o->bits, o->frac, o->min, o->max); if (ok) tok_i64(r->tok[i][0], v); break; }
         case OP_FIXED128: {
             serialize_int128_t v;
-            ok = serialize_read_fixed128(&rd, &v, o->bits, 0, o->min, o->max);
+            ok = serialize_read_fixed128(&rd, &v, o->bits, o->frac, o->min, o->max);
             if (ok) tok_u128(r->tok[i][0], v.hi, v.lo);
             break;
         }
@@ -506,9 +794,12 @@ static int read_program(const unsigned char *bytes, int nbytes, Program *p, Read
         if (!ok) {
             r->accept = 0;
             r->refstep = i;
-            snprintf(r->reason, sizeof(r->reason), "%s", serialize_refusal_name(serialize_read_refusal(&rd)));
+            serialize_refusal_t ref = serialize_read_refusal(&rd);
+            snprintf(r->reason, sizeof(r->reason), "%s", serialize_refusal_name(ref));
+            r->term = check_terminal(&rd, ref);
             return 1;
         }
+        r->rbits = serialize_read_bits_processed(&rd);
         if (o->kind != OP_ALIGN && o->kind != OP_END) {
             r->ntok[i] = o->kind == OP_OBJECT ? 3 : 1;
         }
@@ -534,6 +825,14 @@ static void set_bits_le(unsigned char *buf, int bit, int width, uint64_t value) 
     }
 }
 
+static void set_u128_bits_le(unsigned char *buf, int bit, int width, serialize_uint128_t value) {
+    int lo_w = width > 64 ? 64 : width;
+    set_bits_le(buf, bit, lo_w, value.lo);
+    if (width > 64) {
+        set_bits_le(buf, bit + 64, width - 64, value.hi);
+    }
+}
+
 /* Rewrite one ranged field's offset one past its span: serialize.c's reader
    refuses there, so the mutant exercises the reader's range check rather than
    only truncation and string framing (STANDARD.md, int; DESIGN.md (c)).
@@ -547,7 +846,7 @@ static int make_targeted_mutant(Program *p) {
     if (best < 0) return 0;
     memcpy(p->mutant, p->bytes, (size_t)p->nbytes);
     p->nmutant = p->nbytes;
-    set_bits_le(p->mutant, p->rstart[best], p->rwidth[best], p->rtarget[best]);
+    set_u128_bits_le(p->mutant, p->rstart[best], p->rwidth[best], p->rtarget[best]);
     targeted_kind[p->rkind[best]]++;
     return 1;
 }
@@ -605,11 +904,11 @@ static void write_op_line(FILE *f, const Op *o) {
         break;
     case OP_FLOAT: fprintf(f, "float %08" PRIx32 "\n", (uint32_t)o->u); break;
     case OP_DOUBLE: fprintf(f, "double %016" PRIx64 "\n", o->u); break;
-    case OP_FIXED32: fprintf(f, "fixed32 %d 0 %" PRId64 " %" PRId64 " %" PRId64 "\n", o->bits, o->min, o->max, o->s); break;
-    case OP_FIXED64: fprintf(f, "fixed64 %d 0 %" PRId64 " %" PRId64 " %" PRId64 "\n", o->bits, o->min, o->max, o->s); break;
+    case OP_FIXED32: fprintf(f, "fixed32 %d %d %" PRId64 " %" PRId64 " %" PRId64 "\n", o->bits, o->frac, o->min, o->max, o->s); break;
+    case OP_FIXED64: fprintf(f, "fixed64 %d %d %" PRId64 " %" PRId64 " %" PRId64 "\n", o->bits, o->frac, o->min, o->max, o->s); break;
     case OP_FIXED128:
-        fprintf(f, "fixed128 %d 0 %" PRId64 " %" PRId64 " %016" PRIx64 " %016" PRIx64 "\n",
-            o->bits, o->min, o->max, (uint64_t)o->s, (uint64_t)(o->s < 0 ? ~0ULL : 0));
+        fprintf(f, "fixed128 %d %d %" PRId64 " %" PRId64 " %016" PRIx64 " %016" PRIx64 "\n",
+            o->bits, o->frac, o->min, o->max, o->u, o->u2);
         break;
     case OP_CFLOAT: fprintf(f, "cfloat %08" PRIx32 " %08" PRIx32 " %08" PRIx32 " %08" PRIx32 "\n",
         f32_bits(o->f1), f32_bits(o->f2), f32_bits(o->f3), f32_bits(o->f4)); break;
@@ -655,6 +954,9 @@ typedef struct {
     unsigned char wbytes[BUFCAP + 8];
     int nw;
     int wok;
+    int64_t wbits;
+    int64_t mbits;
+    int64_t mbytes;
     ReadResult c, m;
 } LobOut;
 
@@ -692,13 +994,19 @@ static int parse_out(const char *path, LobOut *outs, int nprog, int base) {
             char *ids = strtok_r(NULL, " ", &save);
             char *hex = strtok_r(NULL, " ", &save);
             char *ok = strtok_r(NULL, " ", &save);
-            if (!ids || !hex || !ok) { rc = -1; break; }
+            char *wb = strtok_r(NULL, " ", &save);
+            char *mb = strtok_r(NULL, " ", &save);
+            char *mby = strtok_r(NULL, " ", &save);
+            if (!ids || !hex || !ok || !wb || !mb || !mby) { rc = -1; break; }
             int id = atoi(ids) - base;
             if (id < 0 || id >= nprog) { rc = -1; break; }
             int n = hex_decode(hex, outs[id].wbytes, BUFCAP);
             if (n < 0) { rc = -1; break; }
             outs[id].nw = n;
             outs[id].wok = atoi(ok);
+            outs[id].wbits = atoll(wb);
+            outs[id].mbits = atoll(mb);
+            outs[id].mbytes = atoll(mby);
             outs[id].seen |= 1;
         } else if (strcmp(tag, "R") == 0) {
             char *ids = strtok_r(NULL, " ", &save);
@@ -706,13 +1014,17 @@ static int parse_out(const char *path, LobOut *outs, int nprog, int base) {
             char *acc = strtok_r(NULL, " ", &save);
             char *st = strtok_r(NULL, " ", &save);
             char *why = strtok_r(NULL, " ", &save);
-            if (!ids || !src || !acc || !st || !why) { rc = -1; break; }
+            char *rb = strtok_r(NULL, " ", &save);
+            char *tm = strtok_r(NULL, " ", &save);
+            if (!ids || !src || !acc || !st || !why || !rb || !tm) { rc = -1; break; }
             int id = atoi(ids) - base;
             if (id < 0 || id >= nprog) { rc = -1; break; }
             ReadResult *r = (src[0] == 'c') ? &outs[id].c : &outs[id].m;
             r->accept = atoi(acc);
             r->refstep = atoi(st);
             snprintf(r->reason, sizeof(r->reason), "%s", why);
+            r->rbits = atoll(rb);
+            r->term = atoi(tm);
             if (src[0] == 'c') outs[id].seen |= 2; else outs[id].seen |= 4;
         } else if (strcmp(tag, "V") == 0) {
             char *ids = strtok_r(NULL, " ", &save);
@@ -759,9 +1071,9 @@ static void print_program(FILE *f, Program *p, int widen) {
         case OP_I128: fprintf(f, "int128 %" PRId64 " %" PRId64 " %" PRId64 " %016" PRIx64, p->ops[i].min, p->ops[i].max, p->ops[i].s, p->ops[i].u); break;
         case OP_FLOAT: fprintf(f, "float %08" PRIx32, (uint32_t)p->ops[i].u); break;
         case OP_DOUBLE: fprintf(f, "double %016" PRIx64, p->ops[i].u); break;
-        case OP_FIXED32: fprintf(f, "fixed32 %d %" PRId64 " %" PRId64 " %" PRId64, p->ops[i].bits, p->ops[i].min, p->ops[i].max, p->ops[i].s); break;
-        case OP_FIXED64: fprintf(f, "fixed64 %d %" PRId64 " %" PRId64 " %" PRId64, p->ops[i].bits, p->ops[i].min, p->ops[i].max, p->ops[i].s); break;
-        case OP_FIXED128: fprintf(f, "fixed128 %d %" PRId64 " %" PRId64 " %" PRId64, p->ops[i].bits, p->ops[i].min, p->ops[i].max, p->ops[i].s); break;
+        case OP_FIXED32: fprintf(f, "fixed32 %d %d %" PRId64 " %" PRId64 " %" PRId64, p->ops[i].bits, p->ops[i].frac, p->ops[i].min, p->ops[i].max, p->ops[i].s); break;
+        case OP_FIXED64: fprintf(f, "fixed64 %d %d %" PRId64 " %" PRId64 " %" PRId64, p->ops[i].bits, p->ops[i].frac, p->ops[i].min, p->ops[i].max, p->ops[i].s); break;
+        case OP_FIXED128: fprintf(f, "fixed128 %d %d %" PRId64 " %" PRId64 " %016" PRIx64 " %016" PRIx64, p->ops[i].bits, p->ops[i].frac, p->ops[i].min, p->ops[i].max, p->ops[i].u, p->ops[i].u2); break;
         case OP_CFLOAT: fprintf(f, "cfloat %08" PRIx32 " %08" PRIx32 " %08" PRIx32 " %08" PRIx32, f32_bits(p->ops[i].f1), f32_bits(p->ops[i].f2), f32_bits(p->ops[i].f3), f32_bits(p->ops[i].f4)); break;
         case OP_CFLOAT_PRE: fprintf(f, "cfloat_pre %" PRIu32 " %d", p->ops[i].cmax, p->ops[i].cbits); break;
         case OP_BYTES: { char hx[256]; hex_encode(hx, p->ops[i].buf, p->ops[i].len); fprintf(f, "bytes %d %s", p->ops[i].len, hx); break; }
@@ -787,6 +1099,16 @@ static int compare_read(const char *what, Program *p, ReadResult *exp, ReadResul
     }
     if (strcmp(exp->reason, got->reason) != 0) {
         fprintf(stderr, "%s: refusal reason mismatch (C %s, Lobster %s)\n", what, exp->reason, got->reason);
+        *failed = 1;
+        return 0;
+    }
+    if (exp->rbits != got->rbits) {
+        fprintf(stderr, "%s: consumed bits mismatch (C %" PRId64 ", Lobster %" PRId64 ")\n", what, exp->rbits, got->rbits);
+        *failed = 1;
+        return 0;
+    }
+    if (!exp->term || !got->term) {
+        fprintf(stderr, "%s: terminal behavior mismatch (C %d, Lobster %d)\n", what, exp->term, got->term);
         *failed = 1;
         return 0;
     }
@@ -864,6 +1186,12 @@ static int run_batch(const char *lobster, const char *driver, const char *tmpdir
             failed = 1;
             continue;
         }
+        if (!lo->wok) {
+            fprintf(stderr, "program %d: Lobster writer failed\n", p->id);
+            print_program(stderr, p, widen);
+            failed = 1;
+            continue;
+        }
         if (lo->nw != p->nbytes || memcmp(lo->wbytes, p->bytes, (size_t)p->nbytes) != 0) {
             fprintf(stderr, "program %d: write bytes differ\n", p->id);
             print_program(stderr, p, widen);
@@ -871,6 +1199,19 @@ static int run_batch(const char *lobster, const char *driver, const char *tmpdir
             hex_encode(a, p->bytes, p->nbytes);
             hex_encode(b, lo->wbytes, lo->nw);
             fprintf(stderr, "  C:       %s\n  Lobster: %s\n", a, b);
+            failed = 1;
+            continue;
+        }
+        if (lo->wbits != p->wbits) {
+            fprintf(stderr, "program %d: write bits differ (C %" PRId64 ", Lobster %" PRId64 ")\n", p->id, p->wbits, lo->wbits);
+            print_program(stderr, p, widen);
+            failed = 1;
+            continue;
+        }
+        if (lo->mbits != p->mbits || lo->mbytes != p->mbytes || p->mbits < p->wbits) {
+            fprintf(stderr, "program %d: measure mismatch (C %" PRId64 " bits/%" PRId64 " bytes, Lobster %" PRId64 " bits/%" PRId64 " bytes, written %" PRId64 " bits)\n",
+                p->id, p->mbits, p->mbytes, lo->mbits, lo->mbytes, p->wbits);
+            print_program(stderr, p, widen);
             failed = 1;
             continue;
         }
@@ -945,8 +1286,12 @@ static void save_failure(const char *dir, const char *work, uint64_t seed,
     if (!f) { perror("fopen REPRODUCE.txt"); return; }
     fprintf(f, "seed 0x%016" PRIx64 "\n", seed);
     fprintf(f, "failing batch: programs %lld..%lld\n", first, end - 1);
+    const char *neg_flag = "";
+    if (negative == 1) neg_flag = " (with --negative-control)";
+    else if (negative == 2) neg_flag = " (with --corrupt-fraction-control)";
+    else if (negative == 3) neg_flag = " (with --corrupt-high-group-control)";
     fprintf(f, "reproduce: make fuzz-run FUZZ_SEED=0x%016" PRIx64 " FUZZ_PROGRAMS=%lld%s\n",
-            seed, end, negative ? " (with --negative-control)" : "");
+            seed, end, neg_flag);
     fprintf(f, "batch.txt is the batch the Lobster child read; result.txt is what it wrote.\n");
     fclose(f);
     fprintf(stderr, "failing inputs saved in %s\n", dir);
@@ -962,6 +1307,8 @@ int main(int argc, char **argv) {
         else if (strcmp(argv[i], "--tmp") == 0 && i + 1 < argc) tmpbase = argv[++i];
         else if (strcmp(argv[i], "--failures") == 0 && i + 1 < argc) failures = argv[++i];
         else if (strcmp(argv[i], "--negative-control") == 0) negative = 1;
+        else if (strcmp(argv[i], "--corrupt-fraction-control") == 0) negative = 2;
+        else if (strcmp(argv[i], "--corrupt-high-group-control") == 0) negative = 3;
         else if (strcmp(argv[i], "--seed") == 0 && i + 1 < argc) {
             if (!parse_u64(argv[++i], &seed)) { fprintf(stderr, "--seed %s is not an unsigned 64-bit integer\n", argv[i]); return 2; }
         } else if (strcmp(argv[i], "--programs") == 0 && i + 1 < argc) {
@@ -973,6 +1320,7 @@ int main(int argc, char **argv) {
     }
     if (!lobster || !driver || !tmpbase) {
         fprintf(stderr, "usage: host --lobster <path> --driver <path> --tmp <dir> [--negative-control]\n"
+                        "            [--corrupt-fraction-control] [--corrupt-high-group-control]\n"
                         "            [--seed <u64>] [--programs <n>] [--duration <seconds>] [--failures <dir>]\n");
         return 2;
     }
@@ -985,6 +1333,9 @@ int main(int argc, char **argv) {
     if (!mkdtemp(tmpl)) { perror("mkdtemp"); return 1; }
 
     rng_state = seed;
+    fixed32_seq = (uint32_t)(seed ^ (seed >> 32));
+    fixed64_seq = (uint32_t)((seed >> 16) ^ (seed >> 48));
+    fixed128_seq = (uint32_t)((seed >> 8) ^ (seed >> 40));
     printf("RUN TestDifferentialAgainstSerializeC\n");
     printf("seed 0x%016" PRIx64 " programs %s%" PRIu64 " duration %" PRIu64 "s\n",
            seed, programs == 0 ? "unlimited/" : "", programs, duration);
