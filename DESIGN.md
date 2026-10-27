@@ -16,10 +16,11 @@ and serialize.c disagree, serialize.c and STANDARD.md decide.
 
 **The vendored standard.** `STANDARD.md`, `IMPLEMENTING.md`, `conformance/`
 and `conformance-controls/` are copied
-VERBATIM from mas-bandwidth/serialize at 3617d3606db9c5686018d6568f0aa761869083c5
-(main, the 2.0.1 corpus: format 2.0 plus commit `3f40cb5f`'s object read
-terminality vectors; byte-identical to the v2.0.1 release PR #130). Before it
-the pin was tag v2.0.0 (merge `8dae4cc08b7b46c9b5fcf08dad5e99ad1348b76b`).
+VERBATIM from mas-bandwidth/serialize at tag v2.0.1
+(`b812b75cc0a75dd925af74103ab1f155b9431ac1`: format 2.0 plus commit
+`3f40cb5f`'s object read terminality vectors and the `object-terminal`
+control). Before it the pin was tag v2.0.0 (merge
+`8dae4cc08b7b46c9b5fcf08dad5e99ad1348b76b`).
 `tools/revendor.sh <tag-or-commit>` copies them from a fetch of the ref and
 diffs each one, and the CI `corpus` job diffs all four against the ref
 (`SERIALIZE_REF`) on every run. The corpus holds 18 files: format 2.0 removed
