@@ -10,6 +10,10 @@
 # at INT64_MAX as the reference's patch does; this port's int64 read returns
 # min early on a degenerate range, so the degenerate case is left intact.
 # wrong-reason: the NUL rule still refuses, under invalid_utf8.
+# object-terminal: two rows, as the reference's control removes both halves of
+# serialize_object's latch (the refusal on entry and the one on exit); the
+# lines are identical across the three streams, so all three are patched and
+# only the read stream's can change a vector.
 align-padding	src/serialize_stream.lobster	1	    if n > 0 and s.unpack_bits(n) != 0:	    if n > 0 and s.unpack_bits(n) == 0xFFFFFFFF:
 ranged-reconstruction	src/serialize_int.lobster	1	    return min + offset, true	    return offset, true
 ranged-range	src/serialize_int.lobster	1	    if offset > span:	    if offset > span + 0xFFFFFFFF:
@@ -25,3 +29,5 @@ string-utf8	src/serialize_bytes.lobster	1	    if not string_utf8_valid(data, n):
 string-utf8-surrogate	src/serialize_bytes.lobster	1	            if lead == 0xED and b1 >= 0xA0:	            if lead == 0xED and b1 >= 0xA0 and b1 > 0xFF:
 int64-through-double	src/serialize_int.lobster	1	    let result = min + offset	    let result = (if float(min + offset) >= 9223372036854775807.0: 9223372036854775807 else: int(float(min + offset)))
 wrong-reason	src/serialize_bytes.lobster	1	        return serialize_refusal_embedded_nul	        return serialize_refusal_invalid_utf8
+object-terminal	src/serialize_object.lobster	3	    if s.failed:	    if s.failed and not s.failed:
+object-terminal	src/serialize_object.lobster	3	    return s.ok()	    return true
