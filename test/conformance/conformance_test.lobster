@@ -23,6 +23,15 @@ import serialize
 
 var conf_soft = false
 
+// The object an `object <n>` step hands serialize_object: it reads nothing of
+// its own and always succeeds, so whether the step refuses is the library's
+// latch alone (the reference's conformance.cpp NestedObject with no steps).
+class conf_empty_object : serialize_object_base
+    unused:int = 0
+
+def serialize(o::conf_empty_object, s) -> bool:
+    return true
+
 class cval:
     kind:int = 0     // 0 text, 1 int, 2 128-bit, 3 float bits, -1 unknown
     text:string = ""
@@ -360,9 +369,12 @@ def conf_step_read(r:serialize_read_stream, step:string) -> cval, bool:
         return conf_text_val(""), false
     let op = toks[0]
     if op == "object":
-        if r.failed:
-            return conf_text_val("-"), false
-        return conf_text_val("-"), true
+        // The object step goes through the library's own serialize_object, so
+        // a refused stream must refuse it on entry even when the object reads
+        // nothing (STANDARD.md, Reader Obligations, "Failure is terminal").
+        // The n steps it wraps run next on the same stream, as STANDARD.md's
+        // object section says a nested read equals the same operations unnested.
+        return conf_text_val("-"), r.serialize_object(conf_empty_object {})
     if op == "align":
         return conf_text_val("-"), r.serialize_align()
     if op == "end":
@@ -650,7 +662,7 @@ def conf_sentinel(step:string) -> cval:
     if length(toks) == 0:
         return conf_text_val("")
     let op = toks[0]
-    if op == "align" or op == "end":
+    if op == "align" or op == "end" or op == "object":
         return conf_text_val("-")
     if op == "bool":
         let v = conf_int_val(1)

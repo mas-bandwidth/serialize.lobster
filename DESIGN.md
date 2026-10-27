@@ -16,15 +16,16 @@ and serialize.c disagree, serialize.c and STANDARD.md decide.
 
 **The vendored standard.** `STANDARD.md`, `IMPLEMENTING.md`, `conformance/`
 and `conformance-controls/` are copied
-VERBATIM from mas-bandwidth/serialize at tag v2.0.0
-(merge `8dae4cc08b7b46c9b5fcf08dad5e99ad1348b76b`); the standard and
-the corpus are byte-identical at the format 2.0 pin
-`dedf58efa93832fd243dbf3a2a1ca0a91c46b14b`. `tools/revendor.sh <tag>` copies
-them from a clone of the tag and diffs each one, and the CI `corpus` job diffs
-all four against the tag on every run. The corpus holds 18 files: format 2.0
-removed `wstring.txt` and added `end.txt`.
+VERBATIM from mas-bandwidth/serialize at 3617d3606db9c5686018d6568f0aa761869083c5
+(main, the 2.0.1 corpus: format 2.0 plus commit `3f40cb5f`'s object read
+terminality vectors; byte-identical to the v2.0.1 release PR #130). Before it
+the pin was tag v2.0.0 (merge `8dae4cc08b7b46c9b5fcf08dad5e99ad1348b76b`).
+`tools/revendor.sh <tag-or-commit>` copies them from a fetch of the ref and
+diffs each one, and the CI `corpus` job diffs all four against the ref
+(`SERIALIZE_REF`) on every run. The corpus holds 18 files: format 2.0 removed
+`wstring.txt` and added `end.txt`.
 
-Nothing here edits them; a change arrives by re-vendoring from a new tag.
+Nothing here edits them; a change arrives by re-vendoring from a new ref.
 
 **The pin.** Lobster v2026.8 is pinned through its release zip, with the sha256
 below. The tag `v2026.8` is the annotated tag object
