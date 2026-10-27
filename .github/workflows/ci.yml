@@ -47,15 +47,19 @@ jobs:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, Linux, X64, fleet, serialize]
     env:
-      SERIALIZE_TAG: v2.0.0
+      SERIALIZE_REF: 3617d3606db9c5686018d6568f0aa761869083c5
     steps:
       - uses: actions/checkout@v4
 
       # STANDARD.md, IMPLEMENTING.md, conformance/ and conformance-controls/ are
       # VERBATIM vendored copies (DESIGN.md, "The vendored standard"). They must
-      # be the pinned release's own bytes; a divergence is red, never a skip.
+      # be the pinned ref's own bytes; a divergence is red, never a skip. The
+      # pin is a release tag or a full commit sha, so the ref is fetched, not cloned.
       - name: Check out the reference at the corpus pin
-        run: git clone --quiet --depth 1 --branch "$SERIALIZE_TAG" https://github.com/mas-bandwidth/serialize.git "$RUNNER_TEMP/serialize"
+        run: |
+          git init --quiet "$RUNNER_TEMP/serialize"
+          git -C "$RUNNER_TEMP/serialize" fetch --quiet --depth 1 https://github.com/mas-bandwidth/serialize.git "$SERIALIZE_REF"
+          git -C "$RUNNER_TEMP/serialize" checkout --quiet FETCH_HEAD
 
       - name: The vendored corpus and standard are the pin's
         run: |
