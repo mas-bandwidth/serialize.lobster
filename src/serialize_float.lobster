@@ -7,7 +7,7 @@
 // values only, every one bit exact"): a pattern whose exponent field is all
 // ones (NaN with any payload, either infinity) is refused as non_finite_float
 // on read, tested on the raw wire bits before the destination is written, and
-// latches the same reason on write. Every finite pattern, negative zero and
+// is write misuse on a write or a measure, which traps (IMPLEMENTING.md U9). Every finite pattern, negative zero and
 // the subnormals included, is reproduced bit for bit.
 import .serialize_stream
 
@@ -34,6 +34,15 @@ def serialize_float32_bits_are_finite(bits:int) -> bool:
 
 def serialize_float64_bits_are_finite(bits:int) -> bool:
     return (bits & 0x7FF0000000000000) != 0x7FF0000000000000
+
+// The finite checks a write and a measure make (IMPLEMENTING.md U6, U9).
+def serialize_check_float32_finite(pattern:int):
+    if not serialize_float32_bits_are_finite(pattern):
+        serialize_abort("serialize: float value must be finite")
+
+def serialize_check_float64_finite(pattern:int):
+    if not serialize_float64_bits_are_finite(pattern):
+        serialize_abort("serialize: double value must be finite")
 
 // serialize_float32_bits: the 32 bits of the IEEE-754 single-precision
 // representation, through the scratch string (STANDARD.md, Floating Point,
@@ -89,14 +98,11 @@ def serialize_float64_from_bits(u:int) -> float:
 // serialize_float on the write stream: a 32-bit group (STANDARD.md, float).
 // A writer is handed finite values only, as it is handed an int inside its
 // range: a NaN, an infinity, or a finite double that narrows past FLT_MAX
-// latches non_finite_float and writes nothing (STANDARD.md, "Finite values
-// only"). The whole width is gated before any bit moves (DESIGN.md (e)).
+// traps, tested on the bits after the narrowing (IMPLEMENTING.md, The check
+// model; U9). The whole width is gated before any bit moves.
 def serialize_float(s:serialize_write_stream, value:float):
-    if s.failed:
-        return value, false
     let pattern = serialize_float32_bits(value)
-    if not serialize_float32_bits_are_finite(pattern):
-        return value, s.fail(serialize_refusal_non_finite_float)
+    serialize_check_float32_finite(pattern)
     if not s.write_gate(32):
         return value, false
     s.pack_bits(pattern, 32)
@@ -117,19 +123,15 @@ def serialize_float(s:serialize_read_stream, value:float):
     return serialize_float32_from_bits(bits), true
 
 def serialize_float(s:serialize_measure_stream, value:float):
-    if s.failed:
-        return value, false
+    serialize_check_float32_finite(serialize_float32_bits(value))
     s.measure_bits(32)
     return value, true
 
 // serialize_double on the write stream: one 64-bit group (STANDARD.md,
-// double). A NaN or an infinity latches non_finite_float and writes nothing.
+// double). A NaN or an infinity traps (IMPLEMENTING.md U9).
 def serialize_double(s:serialize_write_stream, value:float):
-    if s.failed:
-        return value, false
     let pattern = serialize_float64_bits(value)
-    if not serialize_float64_bits_are_finite(pattern):
-        return value, s.fail(serialize_refusal_non_finite_float)
+    serialize_check_float64_finite(pattern)
     if not s.write_gate(64):
         return value, false
     s.pack_bits64(pattern, 64)
@@ -149,7 +151,6 @@ def serialize_double(s:serialize_read_stream, value:float):
     return serialize_float64_from_bits(bits), true
 
 def serialize_double(s:serialize_measure_stream, value:float):
-    if s.failed:
-        return value, false
+    serialize_check_float64_finite(serialize_float64_bits(value))
     s.measure_bits(64)
     return value, true

@@ -10,7 +10,7 @@
 //
 // Plus the finite rule: every finite class (both zeros, the subnormals, the
 // largest finite) round trips bit for bit through float and double, every
-// non-finite class latches non_finite_float on write and is refused on read;
+// non-finite class traps on write (IMPLEMENTING.md U9) and is refused on read;
 // the compressed float decode that rounds to +inf is refused; and
 // compressed_float at min, max, max - res/2 and one ulp outside.
 import serialize
@@ -449,9 +449,9 @@ def serialize_float_test_run_file(name:string):
 // Every finite class, both zeros and the subnormals included, round trips
 // bit for bit through float and double. Every non-finite class (both
 // infinities, quiet and signaling NaNs of either sign, payloads in either
-// half) latches non_finite_float on write and writes nothing, and on read is
-// refused on its raw bits with the destination untouched. A finite double
-// above FLT_MAX narrows to an infinity and is refused by the float writer.
+// half) traps on write (IMPLEMENTING.md U9: the expect-abort tests below and
+// test/uniform's u9 tests), and on read is refused on its raw bits with the
+// destination untouched.
 def serialize_float_test_finite_classes():
     let finite32 = [
         0x00000000, 0x80000000,
@@ -478,21 +478,11 @@ def serialize_float_test_finite_classes():
         0x7FFFFFFF, 0xFFFFFFFF
     ]
     for(nonfinite32) pattern:
-        let w = serialize_write_stream(ensure_size("", 8, 0))
-        var value = serialize_float32_from_bits(pattern)
         var ok = true
-        value, ok = w.serialize_float(value)
-        serialize_float_test_check(not ok and w.bits_processed() == 0 and w.refusal_name() == "non_finite_float", "non-finite float write " + string(pattern))
         let r = serialize_float_test_stream([pattern & 0xFF, serialize_shr(pattern, 8) & 0xFF, serialize_shr(pattern, 16) & 0xFF, serialize_shr(pattern, 24) & 0xFF])
         var got = 123.5
         got, ok = r.serialize_float(got)
         serialize_float_test_check(not ok and got == 123.5 and r.refusal_name() == "non_finite_float", "non-finite float read " + string(pattern))
-    // A finite double that narrows past FLT_MAX is an infinity on the wire.
-    let wide = serialize_write_stream(ensure_size("", 8, 0))
-    var big = 1.0e39
-    var big_ok = true
-    big, big_ok = wide.serialize_float(big)
-    serialize_float_test_check(not big_ok and wide.bits_processed() == 0 and wide.refusal_name() == "non_finite_float", "float write narrowing past FLT_MAX")
 
     let finite64 = [
         0x0000000000000000, 0x8000000000000000,
@@ -518,11 +508,7 @@ def serialize_float_test_finite_classes():
         0x7FFFFFFFFFFFFFFF, 0xFFFFFFFFFFFFFFFF
     ]
     for(nonfinite64) pattern:
-        let w = serialize_write_stream(ensure_size("", 8, 0))
-        var value = serialize_float64_from_bits(pattern)
         var ok = true
-        value, ok = w.serialize_double(value)
-        serialize_float_test_check(not ok and w.bits_processed() == 0 and w.refusal_name() == "non_finite_float", "non-finite double write " + string(pattern))
         let buf = ensure_size("", 8, 0)
         write_int64_le(buf, 0, pattern)
         let r = serialize_read_stream_padded(buf)
@@ -533,8 +519,8 @@ def serialize_float_test_finite_classes():
 // The compressed float decode must be finite (STANDARD.md, compressed_float):
 // over [3 * 2^103, FLT_MAX] at resolution 2^104 the top integer decodes to
 // +inf. The reader refuses that decode as non_finite_float with its
-// destination untouched, and the integer below it decodes finite; a measure
-// of the declaration aborts nothing.
+// destination untouched, and the integer below it decodes finite. A write or
+// a measure of the declaration traps (the abort tests below; U6).
 def serialize_float_test_compressed_finite_decode():
     let min = serialize_float32_from_bits(0x73C00000)
     let max = serialize_float32_from_bits(0x7F7FFFFF)
@@ -549,9 +535,6 @@ def serialize_float_test_compressed_finite_decode():
     let below = serialize_float_test_stream([0xFD, 0xFF, 0xFF])
     got, ok = below.serialize_compressed_float(got, min, max, res)
     serialize_float_test_check(ok and serialize_float32_bits_are_finite(serialize_float32_bits(got)), "compressed finite: the integer below the top decodes finite")
-    let m = serialize_measure_stream()
-    got, ok = m.serialize_compressed_float(got, min, max, res)
-    serialize_float_test_check(ok and m.bits_processed() == 24, "compressed finite: a measure of the declaration")
 
 // compressed_float's writer at min, max, max - res/2 and one ulp outside
 // (STANDARD.md, compressed_float): [0,10] at resolution 0.01 has
@@ -654,3 +637,15 @@ def TestSerializeFloatPrecomputedNonFiniteTopAbort():
     let min = serialize_float32_from_bits(0x73C00000)
     let max_integer_value, bits, delta = serialize_compressed_float_params(min, serialize_float32_from_bits(0x7F7FFFFF), serialize_float32_from_bits(0x73800000))
     w.serialize_compressed_float_precomputed(min, max_integer_value, bits, delta, min)
+
+// A non-finite class on write traps (IMPLEMENTING.md U9): a signaling NaN
+// with a payload, and a negative infinity on a double.
+// expect-abort: serialize: float value must be finite
+def TestSerializeFloatSignalingNaNWriteTraps():
+    let w = serialize_write_stream(ensure_size("", 8, 0))
+    w.serialize_float(serialize_float32_from_bits(0x7F800001))
+
+// expect-abort: serialize: double value must be finite
+def TestSerializeDoubleNegativeInfinityWriteTraps():
+    let w = serialize_write_stream(ensure_size("", 8, 0))
+    w.serialize_double(serialize_float64_from_bits(0xFFF0000000000000))

@@ -15,6 +15,12 @@ def serialize_check_int32(value:int, name:string):
     if not serialize_int32_fits(value):
         serialize_abort("serialize: " + name + " must be in [INT32_MIN, INT32_MAX]")
 
+// The range check a write and a measure make, on the caller's value as passed
+// (IMPLEMENTING.md U8, U9).
+def serialize_check_in_range(value:int, min:int, max:int):
+    if value < min or value > max:
+        serialize_abort("serialize: value must be in [min, max]")
+
 // serialize_int: bits_required(min, max) bits of value - min, the offset
 // computed in the uint32 domain (STANDARD.md, int (ranged); DESIGN.md (c), (e)).
 def serialize_int(s:serialize_write_stream, value:int, min:int, max:int):
@@ -22,11 +28,8 @@ def serialize_int(s:serialize_write_stream, value:int, min:int, max:int):
     serialize_check_int32(max, "max")
     if min > max:
         serialize_abort("serialize: min must not be greater than max")
-    if s.failed:
-        return value, false
-    // A value outside [min, max] latches and writes nothing (DESIGN.md (e)).
-    if value < min or value > max:
-        return value, s.fail(serialize_refusal_value_out_of_range)
+    // A value outside [min, max] traps (IMPLEMENTING.md U9).
+    serialize_check_in_range(value, min, max)
     let bits = serialize_bits_required(min, max)
     // A degenerate range costs zero bits (STANDARD.md, int).
     if bits == 0:
@@ -63,8 +66,7 @@ def serialize_int(s:serialize_measure_stream, value:int, min:int, max:int):
     serialize_check_int32(max, "max")
     if min > max:
         serialize_abort("serialize: min must not be greater than max")
-    if s.failed:
-        return value, false
+    serialize_check_in_range(value, min, max)
     return value, s.measure_bits(serialize_bits_required(min, max))
 
 // serialize_int64: bits_required64(min, max) bits of value - min in the
@@ -73,10 +75,7 @@ def serialize_int(s:serialize_measure_stream, value:int, min:int, max:int):
 def serialize_int64(s:serialize_write_stream, value:int, min:int, max:int):
     if min > max:
         serialize_abort("serialize: min must not be greater than max")
-    if s.failed:
-        return value, false
-    if value < min or value > max:
-        return value, s.fail(serialize_refusal_value_out_of_range)
+    serialize_check_in_range(value, min, max)
     let bits = serialize_bits_required64(min, max)
     if bits == 0:
         return value, true
@@ -110,9 +109,12 @@ def serialize_int64(s:serialize_read_stream, value:int, min:int, max:int):
 def serialize_int64(s:serialize_measure_stream, value:int, min:int, max:int):
     if min > max:
         serialize_abort("serialize: min must not be greater than max")
-    if s.failed:
-        return value, false
+    serialize_check_in_range(value, min, max)
     return value, s.measure_bits(serialize_bits_required64(min, max))
+
+def serialize_check_int_relative_current(current:int):
+    if current > serialize_int32_max:
+        serialize_abort("serialize: int_relative current must be in [0, INT32_MAX]")
 
 // The largest difference a bounded tier carries (STANDARD.md, int_relative):
 // the absolute tier carrying one is a second encoding of that value.
@@ -138,18 +140,15 @@ def serialize_int_relative_bits(difference:int) -> int:
 // serialize_int_relative: the ladder of one-bit tier flags and the first tier
 // the difference fits; the final tier carries current's raw unsigned 32 bits
 // (STANDARD.md, int_relative; DESIGN.md (e)). The whole tier is gated before a
-// flag moves, so a full buffer latches and writes nothing for this call.
+// flag moves, so a full buffer traps and writes nothing for this call.
 def serialize_int_relative(s:serialize_write_stream, previous:int, current:int):
     if previous < 0 or previous > serialize_int32_max:
         serialize_abort("serialize: int_relative previous must be in [0, INT32_MAX]")
     // serialize.c asserts current > previous on write (ABORT CASES).
     if current <= previous:
         serialize_abort("serialize: int_relative current must be greater than previous")
-    if s.failed:
-        return current, false
-    // A current past the non-negative int32 domain latches (DESIGN.md (e)).
-    if current > serialize_int32_max:
-        return current, s.fail(serialize_refusal_value_out_of_range)
+    // A current past the non-negative int32 domain traps (IMPLEMENTING.md U9).
+    serialize_check_int_relative_current(current)
     let difference = (current - previous) & 0xFFFFFFFF
     let total = serialize_int_relative_bits(difference)
     if not s.write_gate(total):
@@ -290,9 +289,6 @@ def serialize_int_relative(s:serialize_measure_stream, previous:int, current:int
         serialize_abort("serialize: int_relative previous must be in [0, INT32_MAX]")
     if current <= previous:
         serialize_abort("serialize: int_relative current must be greater than previous")
-    if s.failed:
-        return current, false
-    if current > serialize_int32_max:
-        return current, s.fail(serialize_refusal_value_out_of_range)
+    serialize_check_int_relative_current(current)
     let difference = (current - previous) & 0xFFFFFFFF
     return current, s.measure_bits(serialize_int_relative_bits(difference))

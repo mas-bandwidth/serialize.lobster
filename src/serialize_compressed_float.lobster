@@ -105,8 +105,6 @@ def serialize_compressed_float_write_precomputed(s:serialize_write_stream, value
     var integer_value = floor(serialize_float32_round(scaled + 0.5))
     if integer_value > max_integer_value:
         integer_value = max_integer_value
-    if s.failed:
-        return value, false
     if not s.write_gate(bits):
         return value, false
     s.pack_bits(integer_value, bits)
@@ -153,10 +151,12 @@ def serialize_compressed_float(s:serialize_read_stream, value:float, min:float, 
     let decoded, ok = serialize_compressed_float_read_precomputed(s, value, max_integer_value, bits, delta, min)
     return decoded, ok
 
+// A measure makes every check the write makes (IMPLEMENTING.md U6).
 def serialize_compressed_float(s:serialize_measure_stream, value:float, min:float, max:float, res:float):
-    let _, bits, _delta = serialize_compressed_float_params(min, max, res)
-    if s.failed:
-        return value, false
+    let _, bits, delta = serialize_compressed_float_params(min, max, res)
+    serialize_compressed_float_check_top(delta, min)
+    if not serialize_compressed_float_is_finite(serialize_float32_round(value)):
+        serialize_compressed_float_abort_value()
     s.measure_bits(bits)
     return value, true
 
@@ -178,7 +178,8 @@ def serialize_compressed_float_precomputed(s:serialize_read_stream, value:float,
 
 def serialize_compressed_float_precomputed(s:serialize_measure_stream, value:float, max_integer_value:int, bits:int, delta:float, min:float):
     serialize_compressed_float_validate_precomputed(max_integer_value, bits, delta)
-    if s.failed:
-        return value, false
+    serialize_compressed_float_check_top(delta, min)
+    if not serialize_compressed_float_is_finite(serialize_float32_round(value)):
+        serialize_compressed_float_abort_value()
     s.measure_bits(bits)
     return value, true

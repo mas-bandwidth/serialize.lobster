@@ -110,8 +110,8 @@ def TestSmoke():
     // for an align (STANDARD.md, The Measure Stream).
     let m = serialize_measure_stream()
     assert not m.is_writing() and not m.is_reading()
-    var mv, mok = m.serialize_uint8(300)
-    assert mok and mv == 300
+    var mv, mok = m.serialize_uint8(200)
+    assert mok and mv == 200
     mv, mok = m.serialize_bool(true)
     assert mok
     mv, mok = m.serialize_uint64(-1)
@@ -154,29 +154,19 @@ def TestSmoke():
     d8, ok = r2.serialize_uint8(d8)
     assert not ok and d8 == 7
 
-    // The write latch: a write past the end of the buffer latches and writes
-    // nothing, and the stream is terminal (DESIGN.md (e)).
-    let wz = serialize_write_stream("")
-    var wv = 1
-    wv, ok = wz.serialize_uint8(wv)
-    assert not ok and wz.error()
-    var wb = true
-    wb, ok = wz.serialize_bool(wb)
-    assert not ok and wb
-    assert wz.bits_processed() == 0
-    // A value outside its range latches too, before any bit moves.
-    let wr = serialize_write_stream(ensure_size("", 8, 0))
-    wv, ok = wr.serialize_uint8(256)
-    assert not ok and wr.error()
-    assert wr.bits_processed() == 0
-    // fail() latches by hand, as serialize_write_fail and serialize_read_fail.
+    // A write stream has no latch (IMPLEMENTING.md U9): misuse traps (the
+    // abort test below), and fail() returns false and records nothing. On a
+    // read, fail() latches by hand, as serialize_read_fail does.
     let wf = serialize_write_stream(ensure_size("", 8, 0))
     assert not wf.fail(serialize_refusal_value_out_of_range)
-    assert wf.error()
-    assert wf.refusal_name() == "value_out_of_range"
+    assert wf.ok() and wf.refusal_name() == "none"
+    let rf = serialize_read_stream_padded("AB")
+    assert not rf.fail(serialize_refusal_value_out_of_range)
+    assert rf.error()
+    assert rf.refusal_name() == "value_out_of_range"
     // The first reason is kept; a later refusal is its echo.
-    assert not wf.fail(serialize_refusal_past_end)
-    assert wf.refusal_name() == "value_out_of_range"
+    assert not rf.fail(serialize_refusal_past_end)
+    assert rf.refusal_name() == "value_out_of_range"
     // The closed list, spelled exactly as STANDARD.md, Refusal reasons.
     assert serialize_refusal_name(serialize_refusal_none) == "none"
     assert serialize_refusal_name(serialize_refusal_past_end) == "past_end"
@@ -228,3 +218,10 @@ def TestReadSlackContract():
     assert n.error() and n.refusal_name() == "value_out_of_range"
     v, ok = n.serialize_uint8(v)
     assert not ok and v == 7 and n.bits_remaining() == 0
+
+// A write past the end of the buffer traps before any bit moves
+// (IMPLEMENTING.md U9, U10).
+// expect-abort: serialize: write does not fit the room left in the buffer
+def TestSmokeWritePastEndTraps():
+    let wz = serialize_write_stream("")
+    wz.serialize_uint8(1)
