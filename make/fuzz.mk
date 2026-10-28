@@ -126,11 +126,12 @@ fuzz: fuzz-run
 	@if $(FUZZ_HOST) --lobster $(LOBSTER) --driver $(FUZZ_FRAC)/fuzz_driver.lobster --tmp $(FUZZ_WORK) \
 		>$(FUZZ_BUILD)/lobster-fraction.log 2>&1; then \
 		echo "lobster-fraction negative control DID NOT go red"; exit 1; \
-	elif ! grep -q 'Lobster writer failed' $(FUZZ_BUILD)/lobster-fraction.log || \
+	elif ! grep -qxF 'serialize: value must be in [min, max]' $(FUZZ_BUILD)/lobster-fraction.log || \
+		! grep -q 'lobster child failed' $(FUZZ_BUILD)/lobster-fraction.log || \
 		! grep -q -- '--- FAIL TestDifferentialAgainstSerializeC' $(FUZZ_BUILD)/lobster-fraction.log; then \
 		echo "lobster-fraction negative control went red for the wrong reason (see build/fuzz/lobster-fraction.log)"; exit 1; \
 	else \
-		echo "lobster-fraction negative control: RED as expected (Lobster writer failed; see build/fuzz/lobster-fraction.log)"; \
+		echo "lobster-fraction negative control: RED as expected (the Lobster writer traps on the value, IMPLEMENTING.md U9; see build/fuzz/lobster-fraction.log)"; \
 	fi
 	@echo "c-high-group negative control: the C oracle corrupts group 2 of a wide fixed128 field"
 	@if $(FUZZ_HOST) --lobster $(LOBSTER) --driver $(FUZZ_DRIVER) --tmp $(FUZZ_WORK) \
