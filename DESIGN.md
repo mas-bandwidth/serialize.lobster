@@ -16,13 +16,14 @@ and serialize.c disagree, serialize.c and STANDARD.md decide.
 
 **The vendored standard.** `STANDARD.md`, `IMPLEMENTING.md`, `conformance/`
 and `conformance-controls/` are copied
-VERBATIM from mas-bandwidth/serialize at tag v2.1.0
-(`884bc3098c9619d67308d9c6b5cdf38593d98b69`, the merge of the `rejected`
-refusal reason, released 2026-10-27: format 2.0, standard 2.1, with the
-`reject` step, the sNaN-shaped float and double neighbours, the
-compressed_float decode above max, the `object-latch-rejected` and
-`reject-reason` controls, and IMPLEMENTING.md's uniform rules U1 to U16).
-Before it the pin was tag v2.0.1 (`b812b75cc0a75dd925af74103ab1f155b9431ac1`),
+VERBATIM from mas-bandwidth/serialize at tag v2.1.1
+(`bd3d67e23c8acc2c45eff69633dbe16c029a2cba`, the 2.1.1 rulings: one
+write-misuse mechanism, the trap (U9); a measure checks what a write checks
+(U6); `serialize_copy_string` backs off to a whole character and the exports
+ruling (U15). The corpus and STANDARD.md are unchanged since v2.1.0, and only
+IMPLEMENTING.md's text moved). Before it the pin was tag v2.1.0
+(`884bc3098c9619d67308d9c6b5cdf38593d98b69`: format 2.0, standard 2.1, the
+`rejected` reason and the uniform rules U1 to U16), before that tag v2.0.1 (`b812b75cc0a75dd925af74103ab1f155b9431ac1`),
 and before that tag v2.0.0 (merge `8dae4cc08b7b46c9b5fcf08dad5e99ad1348b76b`).
 `tools/revendor.sh <tag-or-commit>` copies them from a fetch of the ref and
 diffs each one, and the CI `corpus` job diffs all four against the ref
