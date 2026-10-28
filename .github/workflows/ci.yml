@@ -35,10 +35,7 @@ jobs:
         run: PATH="$HOME/.local/bin:$PATH" make roadmap-check
 
       - name: Fuzz
-        run: if [ -f make/fuzz.mk ]; then make fuzz; fi
-
-      - name: Bench check
-        run: if [ -f make/bench.mk ]; then make bench-check; fi
+        run: make fuzz
 
   corpus:
     name: STANDARD.md and conformance/ match the corpus pin
@@ -47,7 +44,7 @@ jobs:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, Linux, X64, fleet, serialize]
     env:
-      SERIALIZE_REF: v2.0.1
+      SERIALIZE_REF: v2.1.0
     steps:
       - uses: actions/checkout@v4
 

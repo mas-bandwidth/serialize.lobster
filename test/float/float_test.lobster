@@ -29,6 +29,8 @@ class serialize_float_record:
     value_text:string
     consumed:int
     writer:bool
+    steps:[string]
+    values:[string]
 
 def serialize_float_test_fail(message:string):
     serialize_abort("TestSerializeFloat: " + message)
@@ -44,7 +46,7 @@ def serialize_float_test_new_record(op:string) -> serialize_float_record:
     return serialize_float_record {
         op: op, name: "", param_names: [], param_values: [], bytes: [],
         refused: false, reason: "", expect_bits: false, bits: 0, expect_value: false,
-        value_text: "", consumed: -1, writer: false
+        value_text: "", consumed: -1, writer: false, steps: [], values: []
     }
 
 def serialize_float_test_hex(text:string) -> int:
@@ -130,6 +132,10 @@ def serialize_float_test_parse(text:string) -> [serialize_float_record]:
             elif words[0] == "param" and length(words) >= 4:
                 current.param_names.push(words[1])
                 current.param_values.push(words[3])
+                if words[1] == "step":
+                    // The whole step after "= ", its argument included.
+                    let at = find_string(line, "= ")
+                    current.steps.push(substring(line, at + 2, -1))
             elif words[0] == "bytes":
                 current.bytes = []
                 for(length(words) - 1) i:
@@ -144,6 +150,10 @@ def serialize_float_test_parse(text:string) -> [serialize_float_record]:
                 elif length(words) >= 4 and words[1] == "value":
                     current.expect_value = true
                     current.value_text = words[3]
+                    // Every entry, for a sequence: one per step, ` | ` apart.
+                    let at = find_string(line, "= ")
+                    for(tokenize(substring(line, at + 2, -1), "|", " ")) v:
+                        current.values.push(v)
             elif words[0] == "consumed" and length(words) >= 2:
                 current.consumed = string_to_int(words[1])
             elif words[0] == "writer" and length(words) >= 2 and words[1] == "canonical":
@@ -364,8 +374,61 @@ def serialize_float_test_run_record(record:serialize_float_record, file:string, 
         serialize_float_test_run_fixed(record, label)
     elif record.op == "compressed_float":
         serialize_float_test_run_compressed(record, label)
+    elif record.op == "sequence":
+        serialize_float_test_run_sequence(record, label)
     else:
         serialize_float_test_fail(label + ": no runner for operation " + record.op)
+
+// A float family sequence (STANDARD.md 2.1: a float between raw 32-bit
+// groups shaped like signalling NaNs keeps every group's exact bits): bool,
+// bits <n> <= 32 and float steps. Each step's read must give the stated bits,
+// the whole consumes the stated count, and the canonical writer, handed the
+// decoded values, must emit the stated bytes.
+def serialize_float_test_run_sequence(record:serialize_float_record, label:string):
+    serialize_float_test_check(not record.refused, label + ": a refused float sequence has no runner here")
+    serialize_float_test_check(length(record.values) == length(record.steps), label + ": one value per step")
+    let r = serialize_float_test_stream(record.bytes)
+    let got:[int] = []
+    for(record.steps) step, i:
+        let words = serialize_float_test_words(step)
+        var ok = true
+        if words[0] == "bool":
+            var b = false
+            b, ok = r.serialize_bool(b)
+            got.push(if b: 1 else: 0)
+            serialize_float_test_check(record.values[i] == (if b: "true" else: "false"), label + ": step " + string(i))
+        elif words[0] == "bits" and length(words) == 2:
+            var v = 0
+            v, ok = r.serialize_bits(v, string_to_int(words[1]))
+            got.push(v)
+            serialize_float_test_check(v == serialize_float_test_hex(record.values[i]), label + ": step " + string(i))
+        elif words[0] == "float":
+            var f = 0.0
+            f, ok = r.serialize_float(f)
+            let bits = serialize_float32_bits(f)
+            got.push(bits)
+            serialize_float_test_check(bits == serialize_float_test_hex(record.values[i]), label + ": step " + string(i) + " bits")
+        else:
+            serialize_float_test_fail(label + ": no runner for step " + step)
+        serialize_float_test_check(ok, label + ": step " + string(i) + " refused")
+    serialize_float_test_check(r.bits_processed() == record.consumed, label + ": consumed")
+    if record.writer:
+        let w = serialize_float_test_write(record.consumed)
+        for(record.steps) step, i:
+            let words = serialize_float_test_words(step)
+            var ok = true
+            if words[0] == "bool":
+                var b = got[i] != 0
+                b, ok = w.serialize_bool(b)
+            elif words[0] == "bits":
+                var v = got[i]
+                v, ok = w.serialize_bits(v, string_to_int(words[1]))
+            else:
+                var f = serialize_float32_from_bits(got[i])
+                f, ok = w.serialize_float(f)
+            serialize_float_test_check(ok, label + ": write step " + string(i))
+        w.flush()
+        serialize_float_test_same_bytes(record.bytes, w.buffer, w.bytes_processed(), label)
 
 def serialize_float_test_run_file(name:string):
     let path = "conformance/" + name + ".txt"

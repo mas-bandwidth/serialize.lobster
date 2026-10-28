@@ -185,9 +185,10 @@ def serialize_int128(s:serialize_write_stream, value:serialize_int128, min:seria
     return value, true
 
 def serialize_int128(s:serialize_read_stream, value:serialize_int128, min:serialize_int128, max:serialize_int128):
-    // min > max is API misuse, even on a latched stream (DESIGN.md (e)).
+    // min > max is a bad declaration: refused on a read, never an abort
+    // (IMPLEMENTING.md U7, U16).
     if serialize_int128_compare(min, max) > 0:
-        serialize_abort("serialize: min must not be greater than max")
+        return value, s.serialize_read_misuse()
     if s.failed:
         return value, false
     let umin = serialize_uint128_make(min.hi, min.lo)

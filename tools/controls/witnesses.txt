@@ -12,7 +12,20 @@
 # allocates the payload; planting the allocation first changes only the
 # memory used (measured by hand on 2026-10-22: 16 MB against 2.16 GB maximum
 # resident for strings_claimed_length_before_allocation).
+#
+# Standard 2.1's uniform rules (IMPLEMENTING.md U1-U16) are not corpus rules,
+# so their witnesses are here, one per rule this port changed for 2.1, each
+# planting the 2.0 behaviour (or deleting the rule) back and naming the
+# test/uniform test that must then go red. U2's reject and object latch are
+# corpus rules, witnessed by the reject-reason and object-latch-rejected
+# controls in table.txt.
 float-write-finite	src/serialize_float.lobster	1	    if not serialize_float32_bits_are_finite(pattern):	    if not serialize_float32_bits_are_finite(pattern) and pattern == 0:	float	TestSerializeFloat
 double-write-finite	src/serialize_float.lobster	1	    if not serialize_float64_bits_are_finite(pattern):	    if not serialize_float64_bits_are_finite(pattern) and pattern == 0:	float	TestSerializeFloat
 compressed-float-write-top	src/serialize_compressed_float.lobster	1	    if not serialize_compressed_float_is_finite(top):	    if not serialize_compressed_float_is_finite(top) and top == 0.0:	float	TestSerializeFloatCompressedNonFiniteTopAbort
 first-reason-latch	src/serialize_stream.lobster	1	        if not failed:	        if failed or not failed:	smoke	TestSmoke
+u6-measure-latches	src/serialize_stream.lobster	1	    def fail(reason:serialize_refusal) -> bool: return false	    def fail_unused(reason:serialize_refusal) -> bool: return false	uniform	TestU6MeasureRefusesNothing
+u3-u4-measure-text	src/serialize_bytes.lobster	1	    if string_payload_refusal(value, n) != serialize_refusal_none:	    if string_payload_refusal(value, n) != serialize_refusal_none and n < 0:	uniform	TestU3U4MeasureFollowsTheWriter
+u7-read-misuse-reason	src/serialize_stream.lobster	1	    return s.fail(serialize_refusal_value_out_of_range)	    return s.fail(serialize_refusal_past_end)	uniform	TestU7ReadMisuseRefuses
+u12-write-end	src/serialize_stream.lobster	1	def serialize_end(s::serialize_write_stream) -> bool: return true	def serialize_end(s::serialize_write_stream) -> bool: return s.write_gate(0)	uniform	TestU12EndOnWriteAndMeasure
+u14-fail-no-reason	src/serialize_stream.lobster	1	            refusal = if serialize_refusal_is_reason(reason): reason else: serialize_refusal_rejected	            refusal = reason	uniform	TestU14RefusalNamesAndFail
+u16-precomputed-domain	src/serialize_compressed_float.lobster	1	    return max_integer_value >= 1 and max_integer_value <= 4294967040 and bits == serialize_bits_required(0, max_integer_value) and delta > 0.0 and serialize_compressed_float_is_finite(delta)	    return max_integer_value >= 1 and bits == serialize_bits_required(0, max_integer_value) and delta > 0.0 and serialize_compressed_float_is_finite(delta)	uniform	TestU16PrecomputedMaxIntegerValueDomain

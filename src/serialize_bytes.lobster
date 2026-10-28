@@ -105,10 +105,11 @@ def serialize_bytes(s:serialize_write_stream, data:string, bytes:int):
 // check come before the payload's length, so set padding is nonzero_padding
 // even when the payload would also run past the end.
 def serialize_bytes(s:serialize_read_stream, data:string, bytes:int):
-    if bytes < 0:
-        serialize_abort("serialize: bytes must not be negative")
-    if length(data) < bytes:
-        serialize_abort("serialize: bytes must not exceed the data length")
+    // A negative count, or a destination shorter than the count, is caller
+    // misuse: refused on a read before any bit moves, never an abort
+    // (IMPLEMENTING.md U7; U16, destination capacity).
+    if bytes < 0 or length(data) < bytes:
+        return data, s.serialize_read_misuse()
     if s.failed:
         return data, false
     if not s.serialize_align():
@@ -169,8 +170,9 @@ def serialize_string(s:serialize_write_stream, value:string, buffer_size:int):
 // bytes that remain (past_end), BEFORE the payload is allocated: a short
 // stream claiming a huge length allocates nothing.
 def serialize_string(s:serialize_read_stream, value:string, buffer_size:int):
+    // buffer_size below 1 is refused on a read, never an abort (IMPLEMENTING.md U7).
     if buffer_size < 1:
-        serialize_abort("serialize: buffer_size must be at least 1")
+        return value, s.serialize_read_misuse()
     if s.failed:
         return value, false
     var n = 0
@@ -192,7 +194,9 @@ def serialize_string(s:serialize_read_stream, value:string, buffer_size:int):
     return payload, true
 
 // The exact length width plus the align worst case and the payload
-// (STANDARD.md, The Measure Stream).
+// (STANDARD.md, The Measure Stream). Text the writer refuses (too long, a NUL,
+// not well-formed UTF-8) answers false here too and latches nothing
+// (IMPLEMENTING.md U3, U4, U6).
 def serialize_string(s:serialize_measure_stream, value:string, buffer_size:int):
     if buffer_size < 1:
         serialize_abort("serialize: buffer_size must be at least 1")
@@ -201,6 +205,8 @@ def serialize_string(s:serialize_measure_stream, value:string, buffer_size:int):
     let n = length(value)
     if n >= buffer_size:
         return value, s.fail(serialize_refusal_value_out_of_range)
+    if string_payload_refusal(value, n) != serialize_refusal_none:
+        return value, false
     var sent = 0
     var ok = true
     sent, ok = s.serialize_int(0, 0, buffer_size - 1)
@@ -209,3 +215,22 @@ def serialize_string(s:serialize_measure_stream, value:string, buffer_size:int):
     if not s.serialize_align():
         return value, false
     return value, s.measure_bits(n * 8)
+
+// ---------------------------------------------------------------------------
+// serialize_copy_string (IMPLEMENTING.md U15; the reference's
+// serialize_copy_string): the copy a fixed-size destination of dest_size
+// bytes holds, at most dest_size - 1 bytes of source, stopping at its first
+// NUL. A Lobster string is counted, so the copy is returned rather than
+// written through a pointer, and no terminator is stored. dest_size below 1
+// is caller error (the reference asserts it); this is not a stream, so it
+// aborts like every other caller error off the read path.
+// ---------------------------------------------------------------------------
+
+def serialize_copy_string(source:string, dest_size:int) -> string:
+    if dest_size < 1:
+        serialize_abort("serialize: copy_string dest_size must be at least 1")
+    let limit = if length(source) < dest_size - 1: length(source) else: dest_size - 1
+    var n = 0
+    while n < limit and read_uint8_le(source, n) != 0:
+        n += 1
+    return substring(source, 0, n)

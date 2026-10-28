@@ -187,7 +187,8 @@ def TestSmoke():
     assert serialize_refusal_name(serialize_refusal_invalid_utf8) == "invalid_utf8"
     assert serialize_refusal_name(serialize_refusal_embedded_nul) == "embedded_nul"
     assert serialize_refusal_name(serialize_refusal_non_canonical) == "non_canonical"
-    assert length(serialize_refusal_names) == 9
+    assert serialize_refusal_name(serialize_refusal_rejected) == "rejected"
+    assert length(serialize_refusal_names) == 10
 
     // The number model helpers (DESIGN.md (c)).
     assert serialize_ult(1, -1)
@@ -212,6 +213,18 @@ def TestStubAborts():
 def TestWriteBufferMustBeWords():
     serialize_write_stream(ensure_size("", 12, 0))
 
-// expect-abort: serialize: read data must extend 8 bytes past its length
+// A read that breaks the slack contract, or names a negative byte count, is
+// refused at initialization as value_out_of_range over no bits, never an
+// abort (IMPLEMENTING.md U7): every read on it refuses and reads nothing.
 def TestReadSlackContract():
-    serialize_read_stream("abc", 3)
+    let r = serialize_read_stream("abc", 3)
+    assert r.error() and r.refusal_name() == "value_out_of_range"
+    var v = 7
+    var ok = true
+    v, ok = r.serialize_uint8(v)
+    assert not ok and v == 7 and r.bits_processed() == 0
+    assert r.refusal_name() == "value_out_of_range"
+    let n = serialize_read_stream(ensure_size("", 16, 0), -1)
+    assert n.error() and n.refusal_name() == "value_out_of_range"
+    v, ok = n.serialize_uint8(v)
+    assert not ok and v == 7 and n.bits_remaining() == 0

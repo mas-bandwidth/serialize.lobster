@@ -68,7 +68,8 @@ let serialize_format_version = "2.0"
 // refusal reasons (STANDARD.md, Refusal reasons): the closed list, spelled by
 // serialize_refusal_name exactly as STANDARD.md spells them. A stream latches
 // the FIRST refusal's reason; a later refusal on a failed stream is its echo
-// and keeps it.
+// and keeps it. `rejected` (standard 2.1) is the caller's own refusal, appended
+// last so no other member moves (IMPLEMENTING.md U2).
 // ---------------------------------------------------------------------------
 
 enum serialize_refusal:
@@ -81,6 +82,7 @@ enum serialize_refusal:
     serialize_refusal_invalid_utf8
     serialize_refusal_embedded_nul
     serialize_refusal_non_canonical
+    serialize_refusal_rejected
 
 let serialize_refusal_names = [
     "none",
@@ -91,11 +93,24 @@ let serialize_refusal_names = [
     "non_finite_float",
     "invalid_utf8",
     "embedded_nul",
-    "non_canonical"
+    "non_canonical",
+    "rejected"
 ]
 
-// The family-wide name of a reason ("past_end"); "none" for none.
+// True for a member of the closed list other than none.
+def serialize_refusal_is_reason(refusal:serialize_refusal) -> bool:
+    let r = int(refusal)
+    return r > 0 and r < length(serialize_refusal_names)
+
+// The family-wide name of a reason ("past_end"); "none" for none
+// (IMPLEMENTING.md U14). A value outside the closed list is the caller
+// refusing without saying why, which a stream records as rejected, so it is
+// named "rejected" here too, never a trap.
 def serialize_refusal_name(refusal:serialize_refusal) -> string:
+    if refusal == serialize_refusal_none:
+        return "none"
+    if not serialize_refusal_is_reason(refusal):
+        return "rejected"
     return serialize_refusal_names[int(refusal)]
 
 abstract class serialize_stream:
@@ -119,10 +134,13 @@ abstract class serialize_stream:
         return serialize_refusal_name(refusal)
 
     // serialize_write_fail / serialize_read_fail: latch with a reason, return
-    // false. Only the first reason is kept; later ones are echoes.
+    // false. Only the first reason is kept; later ones are echoes. A refusal
+    // with no reason, or with a value outside the closed list, records
+    // rejected: a refused stream never reports none (IMPLEMENTING.md U14).
+    // The measure stream overrides this and records nothing (U6).
     def fail(reason:serialize_refusal) -> bool:
         if not failed:
-            refusal = reason
+            refusal = if serialize_refusal_is_reason(reason): reason else: serialize_refusal_rejected
         failed = true
         return false
 
@@ -147,9 +165,13 @@ class serialize_read_stream : serialize_stream
     bits_read:int = 0
 
 // A measure stream: a conservative bound, never a refusal (STANDARD.md, The
-// Measure Stream).
+// Measure Stream). Its fail returns false and latches nothing, so misuse on a
+// measure (a value the writer would refuse, an object that refuses) answers
+// false and never poisons it (IMPLEMENTING.md U6).
 class serialize_measure_stream : serialize_stream
     bits_written:int = 0
+
+    def fail(reason:serialize_refusal) -> bool: return false
 
 // serialize_write_stream_init. The buffer's length is the capacity and must be
 // a multiple of 8 bytes: the writer stores whole 64-bit words.
@@ -159,13 +181,13 @@ constructor serialize_write_stream(buffer:string):
     return serialize_write_stream { buffer: buffer, num_bits: length(buffer) * 8 }
 
 // serialize_read_stream_init: the fast path, in place, under the slack
-// contract. A caller that breaks the contract is refused by an abort here,
-// decided by its own arguments, never later by data.
+// contract. A caller that breaks the contract (a negative byte count, or data
+// that does not extend 8 bytes past it) gets a stream refused at
+// initialization as value_out_of_range over no bits, decided by its own
+// arguments, never later by data. A reader never traps (IMPLEMENTING.md U7).
 constructor serialize_read_stream(data:string, bytes:int):
-    if bytes < 0:
-        serialize_abort("serialize: read bytes must not be negative")
-    if length(data) < bytes + 8:
-        serialize_abort("serialize: read data must extend 8 bytes past its length")
+    if bytes < 0 or length(data) < bytes + 8:
+        return serialize_read_stream { data: data, num_bits: 0, failed: true, refusal: serialize_refusal_value_out_of_range }
     return serialize_read_stream { data: data, num_bits: bytes * 8 }
 
 // serialize_read_stream_init_padded: copies exact-length data into a fresh
@@ -211,7 +233,8 @@ def align_bits(s::serialize_write_stream) -> int: return (8 - (bits_written & 7)
 def align_bits(s::serialize_read_stream) -> int: return (8 - (bits_read & 7)) & 7
 
 // serialize_write_flush: write out the partial scratch word (STANDARD.md,
-// Flush). Call once, after the final write.
+// Flush). Call once, after the final write. Flush is required: the caller's
+// buffer is unspecified until it (IMPLEMENTING.md U11).
 def flush(s::serialize_write_stream):
     s.flush_bits()
 
@@ -344,8 +367,8 @@ def serialize_align(s::serialize_measure_stream) -> bool:
 // consumed. A packet reader reads the end after the top-level object.
 // ---------------------------------------------------------------------------
 
-def serialize_end(s::serialize_write_stream) -> bool:
-    return s.write_gate(0)
+// A writer's end is a no-op returning true, latched or not (IMPLEMENTING.md U12).
+def serialize_end(s::serialize_write_stream) -> bool: return true
 
 def serialize_end(s::serialize_read_stream) -> bool:
     if not s.read_gate(0):
@@ -362,6 +385,28 @@ def serialize_end(s::serialize_read_stream) -> bool:
     return true
 
 def serialize_end(s::serialize_measure_stream) -> bool:
-    if s.failed:
-        return false
-    return s.measure_bits(0)
+    // A no-op returning true (IMPLEMENTING.md U12).
+    return true
+
+// ---------------------------------------------------------------------------
+// reject: the caller's own refusal (STANDARD.md, Refusal reasons, rejected;
+// IMPLEMENTING.md U2). On a read it latches rejected through the same latch as
+// every wire refusal, so it is terminal and the first reason wins. On a write
+// or a measure there is nothing to refuse: it is caller misuse, and it returns
+// false and changes nothing, never an abort (IMPLEMENTING.md U9).
+// ---------------------------------------------------------------------------
+
+def reject(s::serialize_read_stream) -> bool:
+    return s.fail(serialize_refusal_rejected)
+
+def reject(s::serialize_write_stream) -> bool:
+    return false
+
+def reject(s::serialize_measure_stream) -> bool:
+    return false
+
+// Caller misuse on a read (a bad declaration, a negative count, a destination
+// too small) refuses value_out_of_range before any bit moves, and never aborts
+// (IMPLEMENTING.md U7, U16). A failed stream keeps its first reason.
+def serialize_read_misuse(s::serialize_read_stream) -> bool:
+    return s.fail(serialize_refusal_value_out_of_range)

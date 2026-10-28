@@ -16,31 +16,43 @@ import .serialize_int128
 
 // ---------------------------------------------------------------------------
 // API misuse (DESIGN.md (e)): a bad Q format, min > max, or whole-unit bounds
-// that do not fit the Q format. These abort; nothing here is a refusal.
+// that do not fit the Q format. On a write or a measure these abort; on a read
+// they refuse value_out_of_range before any bit moves (IMPLEMENTING.md U7,
+// U16).
 // ---------------------------------------------------------------------------
 
-def serialize_fixed_abort_params():
-    serialize_abort("serialize: fixed point requires integer bits >= 1, fraction bits >= 0, a Q format that fits the storage width, and min <= max")
-
-def serialize_fixed_abort_bounds():
-    serialize_abort("serialize: fixed point bounds in whole units do not fit the Q format")
+// The rules a declaration can break, by the code serialize_fixed_declaration
+// returns (0, a good declaration, has none).
+let serialize_fixed_messages = [
+    "",
+    "serialize: fixed point requires integer bits >= 1, fraction bits >= 0, a Q format that fits the storage width, and min <= max",
+    "serialize: fixed point bounds in whole units do not fit the Q format"
+]
 
 // A Q format is legal when its storage width is one STANDARD.md's fixed
 // section carries (8, 16, 32, 64 or 128, always signed), it lies within this
 // arm's storage, integer_bits is at least 1, and min <= max (a degenerate
 // range is legal). The whole-unit bounds must also fit integer_bits, the sign
-// bit counted.
-def serialize_fixed_validate(integer_bits:int, fraction_bits:int, min:int, max:int, min_storage:int, max_storage:int):
+// bit counted. Returns the code of the rule a bad declaration breaks, 0 for a
+// good one: a code, not a string, so the read path allocates nothing.
+def serialize_fixed_declaration(integer_bits:int, fraction_bits:int, min:int, max:int, min_storage:int, max_storage:int) -> int:
     let storage = integer_bits + fraction_bits
     if integer_bits < 1 or fraction_bits < 0 or storage < min_storage or storage > max_storage         or not (storage == 8 or storage == 16 or storage == 32 or storage == 64 or storage == 128):
-        serialize_fixed_abort_params()
+        return 1
     if min > max:
-        serialize_fixed_abort_params()
+        return 1
     if integer_bits < 64:
         let low = -serialize_shl(1, integer_bits - 1)
         let high = serialize_shl(1, integer_bits - 1) - 1
         if min < low or max > high:
-            serialize_fixed_abort_bounds()
+            return 2
+    return 0
+
+// The write and measure check: a bad declaration aborts.
+def serialize_fixed_validate(integer_bits:int, fraction_bits:int, min:int, max:int, min_storage:int, max_storage:int):
+    let code = serialize_fixed_declaration(integer_bits, fraction_bits, min, max, min_storage, max_storage)
+    if code != 0:
+        serialize_abort(serialize_fixed_messages[code])
 
 // ---------------------------------------------------------------------------
 // the unsigned 128-bit pair (DESIGN.md (c); serialize.c's serialize_u128_*)
@@ -187,7 +199,8 @@ def serialize_fixed32(s:serialize_write_stream, value:int, integer_bits:int, fra
     return value, serialize_fixed_write_core(s, serialize_fixed_from_int64(value), fraction_bits, min, max)
 
 def serialize_fixed32(s:serialize_read_stream, value:int, integer_bits:int, fraction_bits:int, min:int, max:int):
-    serialize_fixed_validate(integer_bits, fraction_bits, min, max, 8, 32)
+    if serialize_fixed_declaration(integer_bits, fraction_bits, min, max, 8, 32) != 0:
+        return value, s.serialize_read_misuse()
     let raw, ok = serialize_fixed_read_core(s, fraction_bits, min, max)
     if not ok:
         return value, false
@@ -212,7 +225,8 @@ def serialize_fixed64(s:serialize_write_stream, value:int, integer_bits:int, fra
     return value, serialize_fixed_write_core(s, serialize_fixed_from_int64(value), fraction_bits, min, max)
 
 def serialize_fixed64(s:serialize_read_stream, value:int, integer_bits:int, fraction_bits:int, min:int, max:int):
-    serialize_fixed_validate(integer_bits, fraction_bits, min, max, 8, 64)
+    if serialize_fixed_declaration(integer_bits, fraction_bits, min, max, 8, 64) != 0:
+        return value, s.serialize_read_misuse()
     let raw, ok = serialize_fixed_read_core(s, fraction_bits, min, max)
     if not ok:
         return value, false
@@ -236,7 +250,8 @@ def serialize_fixed128(s:serialize_write_stream, value:serialize_int128, integer
     return value, serialize_fixed_write_core(s, value, fraction_bits, min, max)
 
 def serialize_fixed128(s:serialize_read_stream, value:serialize_int128, integer_bits:int, fraction_bits:int, min:int, max:int):
-    serialize_fixed_validate(integer_bits, fraction_bits, min, max, 128, 128)
+    if serialize_fixed_declaration(integer_bits, fraction_bits, min, max, 128, 128) != 0:
+        return value, s.serialize_read_misuse()
     let raw, ok = serialize_fixed_read_core(s, fraction_bits, min, max)
     if not ok:
         return value, false
