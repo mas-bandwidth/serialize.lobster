@@ -45,7 +45,7 @@ class uniform_bare_object : serialize_object_base
     unused:int = 0
 
 // U2: reject on a read latches rejected; it is terminal, and the first reason
-// wins. On a write or a measure it returns false and changes nothing (U9).
+// wins. On a write or a measure it traps (U9: u9_test's TestU9RejectOn*).
 def TestU2Reject():
     let r = serialize_read_stream_padded("\x05")
     var v = 0
@@ -66,13 +66,6 @@ def TestU2Reject():
     let f = uniform_failed_read()
     assert not f.reject()
     assert f.refusal_name() == "past_end"
-    // Write and measure: false, nothing latched, no abort.
-    let w = serialize_write_stream(ensure_size("", 8, 0))
-    assert not w.reject()
-    assert w.ok() and w.refusal_name() == "none"
-    let m = serialize_measure_stream()
-    assert not m.reject()
-    assert m.ok() and m.refusal_name() == "none"
 
 // U2: the object composition latches rejected when the callback refuses with
 // nothing latched; a refusal inside it keeps its own reason, whether the
@@ -98,46 +91,33 @@ def TestU2ObjectLatchesRejected():
     let a = serialize_read_stream_padded("\x05")
     assert a.serialize_object(uniform_object { bits: 4, result: true })
     assert a.ok() and a.refusal_name() == "none"
-    // A write object that refuses latches rejected too; a measure latches
-    // nothing (U6).
+    // On a write or a measure an object that refuses answers false and
+    // records nothing (U6, U9).
     let w = serialize_write_stream(ensure_size("", 8, 0))
     assert not w.serialize_object(uniform_object { result: false })
-    assert w.error() and w.refusal_name() == "rejected"
+    assert w.ok() and w.refusal_name() == "none"
     let m = serialize_measure_stream()
     assert not m.serialize_object(uniform_object { result: false })
     assert m.ok() and m.refusal_name() == "none"
 
-// U6: a measure refuses nothing. Misuse on it answers false, and it never
-// latches: the measure goes on counting.
+// U6: a measure refuses nothing. fail answers false and records nothing,
+// and the measure goes on counting. Misuse on it traps, as on a write
+// (u9_test's TestU6Measure*Traps).
 def TestU6MeasureRefusesNothing():
     let m = serialize_measure_stream()
     assert not m.fail(serialize_refusal_past_end)
     assert m.ok() and not m.error() and m.refusal_name() == "none"
-    var s = ""
-    var ok = true
-    s, ok = m.serialize_string("abcd", 4)
-    assert not ok and m.ok()
-    var c = 0
-    c, ok = m.serialize_int_relative(5, 2147483648)
-    assert not ok and m.ok()
     var b = false
+    var ok = true
     b, ok = m.serialize_bool(b)
     assert ok and m.ok() and m.bits_processed() == 1
 
-// U3, U4: text the writer refuses (a NUL, malformed UTF-8) the measure
-// refuses too, latching nothing; the writer itself latches, writing nothing.
+// U3, U4, U6: text the writer refuses, the measure refuses by the same trap:
+// a lone surrogate is not well-formed UTF-8.
+// expect-abort: serialize: string must be well-formed UTF-8
 def TestU3U4MeasureFollowsTheWriter():
-    let with_nul = "a\x00b"
-    let lone_surrogate = "\xED\xA0\x80"
-    for([with_nul, lone_surrogate]) text:
-        let m = serialize_measure_stream()
-        var s = ""
-        var ok = true
-        s, ok = m.serialize_string(text, 16)
-        assert not ok and m.ok() and m.bits_processed() == 0
-        let w = serialize_write_stream(ensure_size("", 16, 0))
-        s, ok = w.serialize_string(text, 16)
-        assert not ok and w.error() and w.bits_processed() == 0
+    let m = serialize_measure_stream()
+    m.serialize_string("\xED\xA0\x80", 16)
 
 // U7, U16, U5: caller misuse on a read refuses value_out_of_range before any
 // bit moves, never an abort; on a failed stream the first reason stays.
@@ -249,36 +229,32 @@ def TestU5IntBoundsOutsideInt32AbortOnWrite():
     v, ok = w.serialize_int(v, 0, 4294967296)
 
 // U10: a write checks room for the whole operation before writing any of it:
-// a string whose length field fits and whose payload does not writes nothing.
+// bytes after 3 bits need 5 align bits and 64 payload bits, 72 > 64, so the
+// call traps at the gate before the align bits move (U9).
+// expect-abort: serialize: write does not fit the room left in the buffer
 def TestU10WholeOperationRoom():
-    let w = serialize_write_stream(ensure_size("", 8, 0))
-    var s = ""
-    var ok = true
-    s, ok = w.serialize_string("abcdefgh", 64)
-    assert not ok and w.refusal_name() == "past_end" and w.bits_processed() == 0
     let b = serialize_write_stream(ensure_size("", 8, 0))
     var v = 0
+    var ok = true
     v, ok = b.serialize_bits(v, 3)
-    s, ok = b.serialize_bytes("abcdefgh", 8)
-    assert not ok and b.refusal_name() == "past_end" and b.bits_processed() == 3
+    assert ok
+    b.serialize_bytes("abcdefgh", 8)
 
-// U12: end on a write or a measure is a no-op returning true, latched or not.
+// U12: end on a write or a measure is a no-op returning true.
 def TestU12EndOnWriteAndMeasure():
     let w = serialize_write_stream(ensure_size("", 8, 0))
     assert w.serialize_end() and w.bits_processed() == 0
-    var v = 0
-    var ok = true
-    v, ok = w.serialize_uint8(256)
-    assert not ok and w.error()
+    assert not w.serialize_object(uniform_object { result: false })
     assert w.serialize_end()
     let m = serialize_measure_stream()
     assert m.serialize_end() and m.bits_processed() == 0
     assert not m.serialize_object(uniform_object { result: false })
     assert m.serialize_end()
 
-// U14: the refusal names, "none" for none, and a public fail. A fail with no
-// reason, or with a value outside the closed list, records rejected and never
-// traps: a refused stream never reports none.
+// U14: the refusal names, "none" for none, and a public fail. On a read a
+// fail with no reason, or with a value outside the closed list, records
+// rejected and never traps: a refused stream never reports none. On a write it
+// returns false and records nothing (U9).
 def TestU14RefusalNamesAndFail():
     assert serialize_refusal_name(serialize_refusal_none) == "none"
     assert serialize_refusal_name(serialize_refusal_rejected) == "rejected"
@@ -294,10 +270,10 @@ def TestU14RefusalNamesAndFail():
     assert g.refusal_name() == "trailing_data"
     let w = serialize_write_stream(ensure_size("", 8, 0))
     assert not w.fail(serialize_refusal_none)
-    assert w.refusal_name() == "rejected"
+    assert w.ok() and w.refusal_name() == "none"
 
-// U15: serialize_copy_string, the reference operation this port lacked: at
-// most dest_size - 1 bytes, stopping at the first NUL.
+// U15: serialize_copy_string: at most dest_size - 1 bytes, stopping at the
+// first NUL (the back-off rule is u9_test's TestU15CopyString*).
 def TestU15CopyString():
     assert serialize_copy_string("hello", 4) == "hel"
     assert serialize_copy_string("hello", 6) == "hello"

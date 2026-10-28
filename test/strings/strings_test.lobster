@@ -411,41 +411,20 @@ def strings_run_file(name:string):
             strings_check(false, what + ": unknown operation " + rec.op)
 
 // ---------------------------------------------------------------------------
-// write refusals (coordinator ruling 2026-10-19): bad text latches and writes
-// nothing, mirroring the reader; it never aborts (DESIGN.md (e)).
+// write misuse (IMPLEMENTING.md U3, U4, U9): bad text traps before any bit
+// moves, in the reader's order (the NUL rule first). It never latches.
 // ---------------------------------------------------------------------------
 
-def strings_expect_write_latch_string(value:string, buffer_size:int, reason:string, what:string):
+// expect-abort: serialize: string must be well-formed UTF-8
+def TestSerializeStringsOverlongWriteTraps():
     let w = serialize_write_stream(ensure_size("", 8, 0))
-    var v = value
-    var ok = true
-    v, ok = w.serialize_string(v, buffer_size)
-    strings_check(not ok and w.error(), what + ": expected latch")
-    strings_check(w.refusal_name() == reason, what + ": latched " + w.refusal_name() + ", not " + reason)
-    strings_check(w.bits_processed() == 0, what + ": wrote bits")
-    v, ok = w.serialize_string(value, buffer_size)
-    strings_check(not ok and v == value and w.bits_processed() == 0, what + ": stream not terminal")
+    w.serialize_string("\xC0\x80", 16)
 
-def strings_write_refusals():
-    let with_nul = ensure_size("", 3, 0)
-    write_int8_le(with_nul, 0, 0x61)
-    write_int8_le(with_nul, 1, 0)
-    write_int8_le(with_nul, 2, 0x62)
-    strings_expect_write_latch_string(with_nul, 16, "embedded_nul", "string interior NUL")
-
-    let overlong = ensure_size("", 2, 0)
-    write_int8_le(overlong, 0, 0xC0)
-    write_int8_le(overlong, 1, 0x80)
-    strings_expect_write_latch_string(overlong, 16, "invalid_utf8", "string overlong UTF-8")
-
-    // A NUL and bad UTF-8 together: the NUL rule first, as on read.
-    let both = ensure_size("", 2, 0)
-    write_int8_le(both, 0, 0xFF)
-    write_int8_le(both, 1, 0)
-    strings_expect_write_latch_string(both, 16, "embedded_nul", "string NUL after a byte that is never UTF-8")
-
-    let too_long = ensure_size("", 4, 0x41)
-    strings_expect_write_latch_string(too_long, 4, "value_out_of_range", "string past buffer_size")
+// A NUL and bad UTF-8 together: the NUL rule first, as on read.
+// expect-abort: serialize: string must not hold a NUL
+def TestSerializeStringsNulBeforeUtf8WriteTraps():
+    let w = serialize_write_stream(ensure_size("", 8, 0))
+    w.serialize_string("\xFF\x00", 16)
 
 // A string read holds the claimed length against the bytes that remain BEFORE
 // it allocates the payload (PORT-BRIEF 2026-10-22, allocate-before-check): a
@@ -470,7 +449,6 @@ def TestSerializeStrings():
     strings_run_file("string")
     strings_run_file("align")
     strings_run_file("object")
-    strings_write_refusals()
     strings_claimed_length_before_allocation()
 
 // The API misuse serialize.c asserts on (DESIGN.md (e), ABORT).

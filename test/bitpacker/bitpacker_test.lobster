@@ -304,13 +304,12 @@ def test_bytes_gates():
     assert not wf.error()
     assert wf.bits_processed() == 64
     assert wf.bits_available() == 0
-    wf.pack_bytes(payload, 8, 1)
-    assert wf.error()
-    assert wf.bits_processed() == 64
+    // A zero-count call on a full buffer fits, and moves nothing; one byte
+    // more traps (IMPLEMENTING.md U9: TestBitpackerPackBytesPastEndTraps).
+    wf.pack_bytes(payload, 0, 0)
+    assert wf.ok() and wf.bits_processed() == 64
     for(8) i:
         assert read_uint8_le(full, i) == ((i * 13 + 1) & 0xFF)
-    wf.pack_bytes(payload, 0, 0)
-    assert wf.error()
 
     // Data of 0..9 bytes never reads outside itself: a count one byte past the
     // end is refused with the destination untouched.
@@ -445,35 +444,31 @@ def test_read_latch_over_valid_data():
     assert r2.bits_processed() == 8
     assert r2.bits_remaining() == 120
 
-def test_write_refusals_and_latch():
-    let buf = ensure_size("", 8, 0)
-    let w = serialize_write_stream(buf)
+// Write misuse traps, never latches (IMPLEMENTING.md U9): a value wider than
+// its bits, a negative value, and a write past the end each end the process.
+// expect-abort: serialize: value must fit in bits
+def TestBitpackerWriteOverWideTraps():
+    let w = serialize_write_stream(ensure_size("", 8, 0))
+    w.serialize_bits(8, 3)
+
+// expect-abort: serialize: value must fit in bits
+def TestBitpackerWriteNegativeTraps():
+    let w = serialize_write_stream(ensure_size("", 8, 0))
+    w.serialize_bits(-1, 3)
+
+// expect-abort: serialize: write does not fit the room left in the buffer
+def TestBitpackerWriteBoolPastEndTraps():
+    let w = serialize_write_stream(ensure_size("", 8, 0))
     var v = 0
     var ok = true
-    v, ok = w.serialize_bits(8, 3)
-    assert not ok and v == 8 and w.error()
-    assert w.bits_processed() == 0
-    v, ok = w.serialize_bits(1, 3)
-    assert not ok and w.bits_processed() == 0
+    v, ok = w.serialize_uint64(-1)
+    assert ok and w.bits_available() == 0
+    w.serialize_bool(true)
 
-    let w2 = serialize_write_stream(buf)
-    v, ok = w2.serialize_bits(-1, 3)
-    assert not ok and w2.error()
-    assert w2.bits_processed() == 0
-
-    let w64 = serialize_write_stream(buf)
-    v, ok = w64.serialize_bits64(1 << 40, 40)
-    assert not ok and w64.error()
-    assert w64.bits_processed() == 0
-
-    let w_ovf = serialize_write_stream(buf)
-    v, ok = w_ovf.serialize_uint64(-1)
-    assert ok
-    assert w_ovf.bits_available() == 0
-    var b = true
-    b, ok = w_ovf.serialize_bool(b)
-    assert not ok and w_ovf.error()
-    assert w_ovf.bits_processed() == 64
+// expect-abort: serialize: write does not fit the room left in the buffer
+def TestBitpackerPackBytesPastEndTraps():
+    let w = serialize_write_stream(ensure_size("", 8, 0))
+    w.pack_bytes("abcdefghi", 0, 9)
 
 def check_bits_vec(w:int, hex_bytes:[int], expected_ok:bool, expected_val:int, expected_consumed:int, canonical_writer:bool):
     let nbytes = hex_bytes.length
@@ -625,7 +620,6 @@ def TestBitpacker():
     test_bytes_gates()
     test_bits_required()
     test_read_latch_over_valid_data()
-    test_write_refusals_and_latch()
 
 // expect-abort: serialize: bits must be in [1,32]
 def TestBitpackerBitsZeroAborts():

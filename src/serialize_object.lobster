@@ -17,20 +17,15 @@ abstract class serialize_object_base:
         return false
 
 // Invokes the object's own serialize function inline; it contributes no bytes
-// of its own (STANDARD.md, object). A latched stream refuses before the object
-// runs; a false return latches and leaves the stream terminal (DESIGN.md (a)).
-// A refusal inside the object keeps its own reason (the first one latched);
-// an object that returns false on its own, with no stream refusal, is its
-// caller's refusal and latches rejected (STANDARD.md, Refusal reasons;
-// IMPLEMENTING.md U2). On a measure nothing latches (U6): the object's false
-// is answered with false.
+// of its own (STANDARD.md, object). On a read, a latched stream refuses before
+// the object runs; a false return latches and leaves the stream terminal
+// (DESIGN.md (a)). A refusal inside the object keeps its own reason (the first
+// one latched); an object that returns false on its own, with no stream
+// refusal, is its caller's refusal and latches rejected (STANDARD.md, Refusal
+// reasons; IMPLEMENTING.md U2). On a write or a measure nothing is recorded
+// (U6, U9): the object's false is answered with false.
 def serialize_object(s:serialize_write_stream, object:serialize_object_base) -> bool:
-    if s.failed:
-        return false
-    let ok = object.serialize(s)
-    if not ok:
-        return s.fail(serialize_refusal_rejected)
-    return s.ok()
+    return object.serialize(s)
 
 def serialize_object(s:serialize_read_stream, object:serialize_object_base) -> bool:
     if s.failed:
@@ -41,9 +36,4 @@ def serialize_object(s:serialize_read_stream, object:serialize_object_base) -> b
     return s.ok()
 
 def serialize_object(s:serialize_measure_stream, object:serialize_object_base) -> bool:
-    if s.failed:
-        return false
-    let ok = object.serialize(s)
-    if not ok:
-        return false
-    return s.ok()
+    return object.serialize(s)

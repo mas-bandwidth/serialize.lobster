@@ -148,23 +148,26 @@ def serialize_fixed_read_u128(s:serialize_read_stream, bits:int) -> serialize_in
         group += 1
     return serialize_int128 { lo: lo, hi: hi }
 
-// The write core: an offset encoding over the raw bounds (STANDARD.md, fixed;
-// serialize.c serialize_write_fixed_core). A value outside the raw span
-// latches and writes nothing (DESIGN.md (e)).
-def serialize_fixed_write_core(s:serialize_write_stream, raw:serialize_int128, fraction_bits:int, min:int, max:int) -> bool:
+// The range check a write and a measure make (IMPLEMENTING.md U6, U9): a raw
+// value outside [raw_min, raw_max] traps. Returns the field's width.
+def serialize_fixed_check(raw:serialize_int128, fraction_bits:int, min:int, max:int) -> int:
     let raw_min = serialize_fixed_raw_bound(min, fraction_bits)
     let raw_max = serialize_fixed_raw_bound(max, fraction_bits)
     let span = serialize_fixed_sub128(raw_max, raw_min)
-    let bits = serialize_fixed_bit_length128(span)
-    if s.failed:
-        return false
-    if bits == 0:
-        if raw.lo != raw_min.lo or raw.hi != raw_min.hi:
-            return s.fail(serialize_refusal_value_out_of_range)
-        return true
     let offset = serialize_fixed_sub128(raw, raw_min)
-    if serialize_fixed_compare128(offset, span) > 0:
-        return s.fail(serialize_refusal_value_out_of_range)
+    if serialize_fixed_compare128(span, offset) < 0:
+        serialize_abort("serialize: value must be in [min, max]")
+    return serialize_fixed_bit_length128(span)
+
+// The write core: an offset encoding over the raw bounds (STANDARD.md, fixed;
+// serialize.c serialize_write_fixed_core). A value outside the raw span
+// traps (IMPLEMENTING.md U9).
+def serialize_fixed_write_core(s:serialize_write_stream, raw:serialize_int128, fraction_bits:int, min:int, max:int) -> bool:
+    let bits = serialize_fixed_check(raw, fraction_bits, min, max)
+    if bits == 0:
+        return true
+    let raw_min = serialize_fixed_raw_bound(min, fraction_bits)
+    let offset = serialize_fixed_sub128(raw, raw_min)
     if not s.write_gate(bits):
         return false
     serialize_fixed_write_u128(s, offset, bits)
@@ -209,11 +212,7 @@ def serialize_fixed32(s:serialize_read_stream, value:int, integer_bits:int, frac
 
 def serialize_fixed32(s:serialize_measure_stream, value:int, integer_bits:int, fraction_bits:int, min:int, max:int):
     serialize_fixed_validate(integer_bits, fraction_bits, min, max, 8, 32)
-    if s.failed:
-        return value, false
-    let raw_min = serialize_fixed_raw_bound(min, fraction_bits)
-    let raw_max = serialize_fixed_raw_bound(max, fraction_bits)
-    s.measure_bits(serialize_fixed_bit_length128(serialize_fixed_sub128(raw_max, raw_min)))
+    s.measure_bits(serialize_fixed_check(serialize_fixed_from_int64(value), fraction_bits, min, max))
     return value, true
 
 // ---------------------------------------------------------------------------
@@ -234,11 +233,7 @@ def serialize_fixed64(s:serialize_read_stream, value:int, integer_bits:int, frac
 
 def serialize_fixed64(s:serialize_measure_stream, value:int, integer_bits:int, fraction_bits:int, min:int, max:int):
     serialize_fixed_validate(integer_bits, fraction_bits, min, max, 8, 64)
-    if s.failed:
-        return value, false
-    let raw_min = serialize_fixed_raw_bound(min, fraction_bits)
-    let raw_max = serialize_fixed_raw_bound(max, fraction_bits)
-    s.measure_bits(serialize_fixed_bit_length128(serialize_fixed_sub128(raw_max, raw_min)))
+    s.measure_bits(serialize_fixed_check(serialize_fixed_from_int64(value), fraction_bits, min, max))
     return value, true
 
 // ---------------------------------------------------------------------------
@@ -259,9 +254,5 @@ def serialize_fixed128(s:serialize_read_stream, value:serialize_int128, integer_
 
 def serialize_fixed128(s:serialize_measure_stream, value:serialize_int128, integer_bits:int, fraction_bits:int, min:int, max:int):
     serialize_fixed_validate(integer_bits, fraction_bits, min, max, 128, 128)
-    if s.failed:
-        return value, false
-    let raw_min = serialize_fixed_raw_bound(min, fraction_bits)
-    let raw_max = serialize_fixed_raw_bound(max, fraction_bits)
-    s.measure_bits(serialize_fixed_bit_length128(serialize_fixed_sub128(raw_max, raw_min)))
+    s.measure_bits(serialize_fixed_check(value, fraction_bits, min, max))
     return value, true

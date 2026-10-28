@@ -1,8 +1,8 @@
 // serialize_bytes.lobster — bytes and string
 // (STANDARD.md, Bytes and Strings: bytes, string; DESIGN.md (d), (f)).
 //
-// Every write validates the whole operation's width before any bit moves, so a
-// refused call latches and writes nothing (DESIGN.md (e)). Every read gates
+// Every write validates the whole operation's width before any bit moves, so
+// misuse traps and writes nothing (IMPLEMENTING.md U9, U10). Every read gates
 // before any load, refuses malformed content after the payload, and leaves the
 // caller's value untouched on a refusal (STANDARD.md, Reader Obligations).
 
@@ -76,6 +76,21 @@ def string_payload_refusal(data:string, n:int) -> serialize_refusal:
         return serialize_refusal_invalid_utf8
     return serialize_refusal_none
 
+// The string checks a write and a measure make (IMPLEMENTING.md U3, U4, U6,
+// U9): buffer_size at least 1, the text shorter than buffer_size, no NUL, then
+// well-formed UTF-8. Returns the length.
+def serialize_check_string(value:string, buffer_size:int) -> int:
+    if buffer_size < 1:
+        serialize_abort("serialize: buffer_size must be at least 1")
+    let n = length(value)
+    if n >= buffer_size:
+        serialize_abort("serialize: string must be shorter than buffer_size")
+    if string_has_nul(value, n):
+        serialize_abort("serialize: string must not hold a NUL")
+    if not string_utf8_valid(value, n):
+        serialize_abort("serialize: string must be well-formed UTF-8")
+    return n
+
 // ---------------------------------------------------------------------------
 // bytes (STANDARD.md, bytes; DESIGN.md (d))
 // ---------------------------------------------------------------------------
@@ -87,8 +102,6 @@ def serialize_bytes(s:serialize_write_stream, data:string, bytes:int):
         serialize_abort("serialize: bytes must not be negative")
     if length(data) < bytes:
         serialize_abort("serialize: bytes must not exceed the data length")
-    if s.failed:
-        return data, false
     let align = s.align_bits()
     // The whole operation, alignment included, is gated before a bit moves
     // (DESIGN.md (e)).
@@ -127,8 +140,6 @@ def serialize_bytes(s:serialize_measure_stream, data:string, bytes:int):
         serialize_abort("serialize: bytes must not be negative")
     if length(data) < bytes:
         serialize_abort("serialize: bytes must not exceed the data length")
-    if s.failed:
-        return data, false
     if not s.serialize_align():
         return data, false
     return data, s.measure_bits(bytes * 8)
@@ -139,18 +150,9 @@ def serialize_bytes(s:serialize_measure_stream, data:string, bytes:int):
 
 // The length as serialize_int(length, 0, buffer_size - 1), then the payload as
 // serialize_bytes, which aligns (STANDARD.md, string). Bad text and a length
-// past the buffer latch and write nothing (DESIGN.md (e), write refusals).
+// past the buffer trap and write nothing (IMPLEMENTING.md U3, U4, U9).
 def serialize_string(s:serialize_write_stream, value:string, buffer_size:int):
-    if buffer_size < 1:
-        serialize_abort("serialize: buffer_size must be at least 1")
-    if s.failed:
-        return value, false
-    let n = length(value)
-    if n >= buffer_size:
-        return value, s.fail(serialize_refusal_value_out_of_range)
-    let text_refusal = string_payload_refusal(value, n)
-    if text_refusal != serialize_refusal_none:
-        return value, s.fail(text_refusal)
+    let n = serialize_check_string(value, buffer_size)
     let length_bits = serialize_bits_required(0, buffer_size - 1)
     let align = (8 - ((s.bits_written + length_bits) & 7)) & 7
     if not s.write_gate(length_bits + align + n * 8):
@@ -195,18 +197,9 @@ def serialize_string(s:serialize_read_stream, value:string, buffer_size:int):
 
 // The exact length width plus the align worst case and the payload
 // (STANDARD.md, The Measure Stream). Text the writer refuses (too long, a NUL,
-// not well-formed UTF-8) answers false here too and latches nothing
-// (IMPLEMENTING.md U3, U4, U6).
+// not well-formed UTF-8) traps here too (IMPLEMENTING.md U3, U4, U6).
 def serialize_string(s:serialize_measure_stream, value:string, buffer_size:int):
-    if buffer_size < 1:
-        serialize_abort("serialize: buffer_size must be at least 1")
-    if s.failed:
-        return value, false
-    let n = length(value)
-    if n >= buffer_size:
-        return value, s.fail(serialize_refusal_value_out_of_range)
-    if string_payload_refusal(value, n) != serialize_refusal_none:
-        return value, false
+    let n = serialize_check_string(value, buffer_size)
     var sent = 0
     var ok = true
     sent, ok = s.serialize_int(0, 0, buffer_size - 1)
@@ -218,19 +211,23 @@ def serialize_string(s:serialize_measure_stream, value:string, buffer_size:int):
 
 // ---------------------------------------------------------------------------
 // serialize_copy_string (IMPLEMENTING.md U15; the reference's
-// serialize_copy_string): the copy a fixed-size destination of dest_size
-// bytes holds, at most dest_size - 1 bytes of source, stopping at its first
-// NUL. A Lobster string is counted, so the copy is returned rather than
-// written through a pointer, and no terminator is stored. dest_size below 1
-// is caller error (the reference asserts it); this is not a stream, so it
-// aborts like every other caller error off the read path.
+// serialize_copy_string): on the source's bytes, take those before the first
+// NUL; if there are more than dest_size - 1, keep the first dest_size - 1,
+// then drop bytes from the end while the first byte left out is a UTF-8
+// continuation byte (10xxxxxx), so the copy never ends inside a character and
+// serialize_string with buffer_size = dest_size accepts it. A Lobster string
+// is a value, so the prefix is returned and no terminator is stored.
+// dest_size below 1 is write misuse, and traps (U9).
 // ---------------------------------------------------------------------------
 
 def serialize_copy_string(source:string, dest_size:int) -> string:
     if dest_size < 1:
         serialize_abort("serialize: copy_string dest_size must be at least 1")
-    let limit = if length(source) < dest_size - 1: length(source) else: dest_size - 1
     var n = 0
-    while n < limit and read_uint8_le(source, n) != 0:
+    while n < length(source) and read_uint8_le(source, n) != 0:
         n += 1
+    if n > dest_size - 1:
+        n = dest_size - 1
+        while n > 0 and (read_uint8_le(source, n) & 0xC0) == 0x80:
+            n -= 1
     return substring(source, 0, n)

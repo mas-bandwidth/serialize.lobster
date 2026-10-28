@@ -9,8 +9,10 @@
 // (src/serialize_bitpacker.lobster, DESIGN.md (f)).
 
 // ---------------------------------------------------------------------------
-// abort: API misuse and stubs (DESIGN.md (e)). Prints the rule, exits 70.
-// Never reached from data: a refusal latches, it never aborts.
+// abort: the trap (IMPLEMENTING.md U9). Every write and measure misuse, and
+// every stub, ends here: it prints the rule and exits 70. Lobster has no
+// unchecked build, so it traps in every run. Never reached from data: a read
+// refusal latches, it never aborts (U7).
 // ---------------------------------------------------------------------------
 
 def serialize_abort(message:string):
@@ -133,11 +135,11 @@ abstract class serialize_stream:
     def refusal_name() -> string:
         return serialize_refusal_name(refusal)
 
-    // serialize_write_fail / serialize_read_fail: latch with a reason, return
-    // false. Only the first reason is kept; later ones are echoes. A refusal
-    // with no reason, or with a value outside the closed list, records
-    // rejected: a refused stream never reports none (IMPLEMENTING.md U14).
-    // The measure stream overrides this and records nothing (U6).
+    // serialize_read_fail: latch with a reason, return false. Only the first
+    // reason is kept; later ones are echoes. A refusal with no reason, or with
+    // a value outside the closed list, records rejected: a refused stream
+    // never reports none (IMPLEMENTING.md U14). The write and measure streams
+    // override this: there it returns false and records nothing (U6, U9).
     def fail(reason:serialize_refusal) -> bool:
         if not failed:
             refusal = if serialize_refusal_is_reason(reason): reason else: serialize_refusal_rejected
@@ -146,7 +148,9 @@ abstract class serialize_stream:
 
 // A write stream over a caller-owned buffer (DESIGN.md (d)): the words are
 // stored into the caller's string in place, so the caller reads its own buffer
-// back, bytes_processed() bytes of it, after flush(). No copy.
+// back, bytes_processed() bytes of it, after flush(). No copy. A write stream
+// has no refusal state: write misuse traps (IMPLEMENTING.md U9), and fail
+// returns false and records nothing, so it never fails.
 class serialize_write_stream : serialize_stream
     buffer:string
     num_bits:int
@@ -154,6 +158,8 @@ class serialize_write_stream : serialize_stream
     word_index:int = 0
     scratch:int = 0
     scratch_bits:int = 0
+
+    def fail(why:serialize_refusal) -> bool: return false
 
 // A read stream over caller data (DESIGN.md (d)). data must extend 8 bytes
 // past `bytes` (the slack contract, STANDARD.md Reader Obligations, "the
@@ -165,9 +171,9 @@ class serialize_read_stream : serialize_stream
     bits_read:int = 0
 
 // A measure stream: a conservative bound, never a refusal (STANDARD.md, The
-// Measure Stream). Its fail returns false and latches nothing, so misuse on a
-// measure (a value the writer would refuse, an object that refuses) answers
-// false and never poisons it (IMPLEMENTING.md U6).
+// Measure Stream). It makes every check a write makes, except room, by the
+// same trap; its fail returns false and latches nothing, so an object that
+// refuses answers false and never poisons it (IMPLEMENTING.md U6, U9).
 class serialize_measure_stream : serialize_stream
     bits_written:int = 0
 
@@ -242,14 +248,12 @@ def flush(s::serialize_write_stream):
 // the gates every operation passes before any bit moves (DESIGN.md (e))
 // ---------------------------------------------------------------------------
 
-// Write: refuse when latched; refuse (latch) when `bits` more would pass the
-// end of the buffer. Called once with the WHOLE width of the operation, so a
-// refused write leaves nothing behind.
+// Write: trap when `bits` more would pass the end of the buffer
+// (IMPLEMENTING.md U9, U10). Called once with the WHOLE width of the
+// operation, before any bit of it moves.
 def write_gate(s::serialize_write_stream, bits:int) -> bool:
-    if failed:
-        return false
     if bits_written + bits > num_bits:
-        return s.fail(serialize_refusal_past_end)
+        serialize_abort("serialize: write does not fit the room left in the buffer")
     return true
 
 // Read: refuse when latched; refuse (latch) past the end, the test
@@ -269,15 +273,17 @@ def measure_bits(s::serialize_measure_stream, bits:int) -> bool:
 
 // ---------------------------------------------------------------------------
 // the fixed-width aliases of bits (STANDARD.md, bits, the helper table; bool)
-// Write: a value outside [0, 2^n) latches; read: the gate, then the bits, then
-// the destination; measure: the width.
+// Write and measure: a value outside [0, 2^n) traps (IMPLEMENTING.md U6, U9);
+// read: the gate, then the bits, then the destination; measure: the width.
 // ---------------------------------------------------------------------------
 
-def serialize_fixed_width_write(s::serialize_write_stream, value:int, bits:int) -> bool:
-    if failed:
-        return false
+// The width check a write and a measure make (IMPLEMENTING.md U8, U9).
+def serialize_check_fits(value:int, bits:int):
     if bits < 64 and (value < 0 or value > serialize_mask(bits)):
-        return s.fail(serialize_refusal_value_out_of_range)
+        serialize_abort("serialize: value must fit in bits")
+
+def serialize_fixed_width_write(s::serialize_write_stream, value:int, bits:int) -> bool:
+    serialize_check_fits(value, bits)
     if not s.write_gate(bits):
         return false
     if bits <= 32:
@@ -321,12 +327,16 @@ def serialize_uint64(s::serialize_read_stream, value:int):
 def serialize_bool(s::serialize_measure_stream, value:bool):
     return value, s.measure_bits(1)
 def serialize_uint8(s::serialize_measure_stream, value:int):
+    serialize_check_fits(value, 8)
     return value, s.measure_bits(8)
 def serialize_uint16(s::serialize_measure_stream, value:int):
+    serialize_check_fits(value, 16)
     return value, s.measure_bits(16)
 def serialize_uint32(s::serialize_measure_stream, value:int):
+    serialize_check_fits(value, 32)
     return value, s.measure_bits(32)
 def serialize_uint64(s::serialize_measure_stream, value:int):
+    serialize_check_fits(value, 64)
     return value, s.measure_bits(64)
 
 // ---------------------------------------------------------------------------
@@ -367,7 +377,7 @@ def serialize_align(s::serialize_measure_stream) -> bool:
 // consumed. A packet reader reads the end after the top-level object.
 // ---------------------------------------------------------------------------
 
-// A writer's end is a no-op returning true, latched or not (IMPLEMENTING.md U12).
+// A writer's end is a no-op returning true (IMPLEMENTING.md U12).
 def serialize_end(s::serialize_write_stream) -> bool: return true
 
 def serialize_end(s::serialize_read_stream) -> bool:
@@ -392,17 +402,19 @@ def serialize_end(s::serialize_measure_stream) -> bool:
 // reject: the caller's own refusal (STANDARD.md, Refusal reasons, rejected;
 // IMPLEMENTING.md U2). On a read it latches rejected through the same latch as
 // every wire refusal, so it is terminal and the first reason wins. On a write
-// or a measure there is nothing to refuse: it is caller misuse, and it returns
-// false and changes nothing, never an abort (IMPLEMENTING.md U9).
+// or a measure there is nothing to refuse: it is caller misuse, and it traps
+// (IMPLEMENTING.md U9; this port has no unchecked build).
 // ---------------------------------------------------------------------------
 
 def reject(s::serialize_read_stream) -> bool:
     return s.fail(serialize_refusal_rejected)
 
 def reject(s::serialize_write_stream) -> bool:
+    serialize_abort("serialize: reject is read only")
     return false
 
 def reject(s::serialize_measure_stream) -> bool:
+    serialize_abort("serialize: reject is read only")
     return false
 
 // Caller misuse on a read (a bad declaration, a negative count, a destination

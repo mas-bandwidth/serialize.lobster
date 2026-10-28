@@ -549,39 +549,28 @@ def TestSerializeInt():
     int_round_trip64(min64, max64, max64 - 1)
     int_round_trip64(min64, max64, max64)
 
-    // The writer's latch one past each bound: false, latched, no bits moved,
-    // and the stream is terminal (DESIGN.md (e)).
-    let w1 = int_write_stream()
-    var v = 8
+// One past each bound on a write traps (IMPLEMENTING.md U9); above max is in
+// test/uniform's u9 tests. A degenerate range traps too, though it costs no bits.
+// expect-abort: serialize: value must be in [min, max]
+def TestIntBelowMinWriteTraps():
+    let w = int_write_stream()
+    var v = 0
     var ok = true
-    v, ok = w1.serialize_int(v, 0, 7)
-    int_check(not ok and w1.error() and w1.bits_processed() == 0, "int latch above max")
-    let w2 = int_write_stream()
-    v = -1
-    v, ok = w2.serialize_int(v, 0, 7)
-    int_check(not ok and w2.error() and w2.bits_processed() == 0, "int latch below min")
-    let w3 = int_write_stream()
-    var v64 = 8
-    v64, ok = w3.serialize_int64(v64, 0, 7)
-    int_check(not ok and w3.error() and w3.bits_processed() == 0, "int64 latch above max")
-    let w4 = int_write_stream()
-    v64 = 7
-    v64, ok = w4.serialize_int64(v64, 8, 8)
-    int_check(not ok and w4.error() and w4.bits_processed() == 0, "int64 latch below min")
-    let w5 = int_write_stream()
-    var v128 = serialize_int128_from_int64(8)
-    var ok128 = true
-    v128, ok128 = w5.serialize_int128(v128, serialize_int128_from_int64(0), serialize_int128_from_int64(7))
-    int_check(not ok128 and w5.error() and w5.bits_processed() == 0, "int128 latch above max")
-    let w6 = int_write_stream()
-    v128 = serialize_int128_from_int64(-1)
-    v128, ok128 = w6.serialize_int128(v128, serialize_int128_from_int64(0), serialize_int128_from_int64(7))
-    int_check(not ok128 and w6.error() and w6.bits_processed() == 0, "int128 latch below min")
-    let w7 = int_write_stream()
-    var vr = 2147483648
-    var okr = true
-    vr, okr = w7.serialize_int_relative(100, vr)
-    int_check(not okr and w7.error() and w7.bits_processed() == 0, "int_relative latch past the domain")
+    v, ok = w.serialize_int(-1, 0, 7)
+
+// expect-abort: serialize: value must be in [min, max]
+def TestInt64DegenerateRangeWriteTraps():
+    let w = int_write_stream()
+    var v = 0
+    var ok = true
+    v, ok = w.serialize_int64(7, 8, 8)
+
+// expect-abort: serialize: value must be in [min, max]
+def TestInt128BelowMinWriteTraps():
+    let w = int_write_stream()
+    var v = serialize_int128_from_int64(0)
+    var ok = true
+    v, ok = w.serialize_int128(serialize_int128_from_int64(-1), serialize_int128_from_int64(0), serialize_int128_from_int64(7))
 
 // The write contract serialize.c asserts on write (ABORT CASES).
 // expect-abort: serialize: int_relative current must be greater than previous

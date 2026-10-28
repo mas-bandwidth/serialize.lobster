@@ -11,14 +11,13 @@
 # min early on a degenerate range, so the degenerate case is left intact.
 # wrong-reason: the NUL rule still refuses, under invalid_utf8.
 # object-terminal: two rows, as the reference's control removes both halves of
-# serialize_object's latch (the refusal on entry and the one on exit); the
-# lines are identical across the three streams, so all three are patched and
-# only the read stream's can change a vector.
-# object-latch-rejected: the 2.0 latch, recording no reason. The write and
-# read lines are identical, so both are patched; the stream is still marked
-# failed, and falls through to `return s.ok()`, which is false, so only the
-# reason goes red (the reference's control does the same). The measure's own
-# line latches nothing and is not this rule.
+# serialize_object's latch (the refusal on entry and the one on exit); only the
+# read stream's object op has a latch (a write or a measure records nothing,
+# IMPLEMENTING.md U9), so each needle is its one line.
+# object-latch-rejected: the 2.0 latch, recording no reason, on the read
+# stream's line; the stream is still marked failed, and falls through to
+# `return s.ok()`, which is false, so only the reason goes red (the reference's
+# control does the same).
 # reject-reason: reject refuses under a wire rule's name.
 align-padding	src/serialize_stream.lobster	1	    if n > 0 and s.unpack_bits(n) != 0:	    if n > 0 and s.unpack_bits(n) == 0xFFFFFFFF:
 ranged-reconstruction	src/serialize_int.lobster	1	    return min + offset, true	    return offset, true
@@ -35,7 +34,7 @@ string-utf8	src/serialize_bytes.lobster	1	    if not string_utf8_valid(data, n):
 string-utf8-surrogate	src/serialize_bytes.lobster	1	            if lead == 0xED and b1 >= 0xA0:	            if lead == 0xED and b1 >= 0xA0 and b1 > 0xFF:
 int64-through-double	src/serialize_int.lobster	1	    let result = min + offset	    let result = (if float(min + offset) >= 9223372036854775807.0: 9223372036854775807 else: int(float(min + offset)))
 wrong-reason	src/serialize_bytes.lobster	1	        return serialize_refusal_embedded_nul	        return serialize_refusal_invalid_utf8
-object-terminal	src/serialize_object.lobster	3	    if s.failed:	    if s.failed and not s.failed:
-object-terminal	src/serialize_object.lobster	3	    return s.ok()	    return true
-object-latch-rejected	src/serialize_object.lobster	2	        return s.fail(serialize_refusal_rejected)	        s.failed = true
+object-terminal	src/serialize_object.lobster	1	    if s.failed:	    if s.failed and not s.failed:
+object-terminal	src/serialize_object.lobster	1	    return s.ok()	    return true
+object-latch-rejected	src/serialize_object.lobster	1	        return s.fail(serialize_refusal_rejected)	        s.failed = true
 reject-reason	src/serialize_stream.lobster	1	    return s.fail(serialize_refusal_rejected)	    return s.fail(serialize_refusal_value_out_of_range)

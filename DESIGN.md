@@ -16,13 +16,14 @@ and serialize.c disagree, serialize.c and STANDARD.md decide.
 
 **The vendored standard.** `STANDARD.md`, `IMPLEMENTING.md`, `conformance/`
 and `conformance-controls/` are copied
-VERBATIM from mas-bandwidth/serialize at tag v2.1.0
-(`884bc3098c9619d67308d9c6b5cdf38593d98b69`, the merge of the `rejected`
-refusal reason, released 2026-10-27: format 2.0, standard 2.1, with the
-`reject` step, the sNaN-shaped float and double neighbours, the
-compressed_float decode above max, the `object-latch-rejected` and
-`reject-reason` controls, and IMPLEMENTING.md's uniform rules U1 to U16).
-Before it the pin was tag v2.0.1 (`b812b75cc0a75dd925af74103ab1f155b9431ac1`),
+VERBATIM from mas-bandwidth/serialize at tag v2.1.1
+(`bd3d67e23c8acc2c45eff69633dbe16c029a2cba`, the 2.1.1 rulings: one
+write-misuse mechanism, the trap (U9); a measure checks what a write checks
+(U6); `serialize_copy_string` backs off to a whole character and the exports
+ruling (U15). The corpus and STANDARD.md are unchanged since v2.1.0, and only
+IMPLEMENTING.md's text moved). Before it the pin was tag v2.1.0
+(`884bc3098c9619d67308d9c6b5cdf38593d98b69`: format 2.0, standard 2.1, the
+`rejected` reason and the uniform rules U1 to U16), before that tag v2.0.1 (`b812b75cc0a75dd925af74103ab1f155b9431ac1`),
 and before that tag v2.0.0 (merge `8dae4cc08b7b46c9b5fcf08dad5e99ad1348b76b`).
 `tools/revendor.sh <tag-or-commit>` copies them from a fetch of the ref and
 diffs each one, and the CI `corpus` job diffs all four against the ref
@@ -76,9 +77,11 @@ and `ok`, which is `true` on success and `false` on a refusal.
 - A measure returns its input.
 
 Lobster discards a return value that has no variable to receive it, so
-`m.x = s.serialize_int(m.x, 0, 7)` is the usual form. The latch, (e), makes it
-safe to check `s.ok()` once at the end. Operations that carry no value
-(`serialize_align`, `serialize_end`, `serialize_object`) return `ok` alone.
+`m.x = s.serialize_int(m.x, 0, 7)` is the usual form. The read latch, (e),
+makes it safe to check `s.ok()` once at the end; a write or a measure has no
+latch, because its misuse traps at the call (IMPLEMENTING.md U9).
+Operations that carry no value (`serialize_align`, `serialize_end`,
+`serialize_object`) return `ok` alone.
 
 **A packet ends with its end.** STANDARD.md, end: a reader reads
 `s.serialize_end()` after the last field of the packet's top-level object,
@@ -107,8 +110,8 @@ measure's costs nothing, so the same message function serves all three:
 | `s.bits_remaining()` (read) | `serialize_read_bits_remaining` | |
 | `s.align_bits()` (write, read) | `serialize_write_align_bits`, `serialize_read_align_bits` | |
 | `s.error()`, `s.ok()` | `serialize_*_error` | `ok()` is `not error()` |
-| `s.fail(reason)` | `serialize_write_fail`, `serialize_read_fail` | latches the stream with a reason and returns `false`; only the first reason is kept; no reason, or a value outside the closed list, records `rejected` (U14); on a measure it returns `false` and latches nothing (U6) |
-| `s.reject()` | (C++ `serialize_reject`) | the caller's own refusal: on a read it latches `rejected` through `fail`; on a write or a measure it returns `false` and changes nothing (U2, U9) |
+| `s.fail(reason)` | `serialize_write_fail`, `serialize_read_fail` | on a read it latches the stream with a reason and returns `false`; only the first reason is kept; no reason, or a value outside the closed list, records `rejected` (U14); on a write or a measure it returns `false`, records nothing and never traps (U6, U9) |
+| `s.reject()` | (C++ `serialize_reject`) | the caller's own refusal: on a read it latches `rejected` through `fail`; on a write or a measure it is misuse and traps (U2, U9) |
 | `s.refusal`, `s.refusal_name()` | `serialize_read_refusal`, `serialize_refusal_name` | the first refusal's reason, `serialize_refusal_none` (`"none"`) before one |
 | `s.is_writing()`, `s.is_reading()` | (C++ `IsWriting`, `IsReading`) | added, see below |
 
@@ -168,10 +171,11 @@ Deviations, each with its reason:
 | `serialize_object(object)` | returns ok | (STANDARD.md, object) | object |
 | `reject()` | returns `false` | (C++ `serialize_reject`; STANDARD.md, Refusal reasons) | stream |
 
-The measure forms take the same arguments as the write forms. A measure uses
-only what sets the width: the bounds, `bits`, and the value only for
-int_relative and string. That is the doctrine serialize.c states for
-its measure functions.
+The measure forms take the same arguments as the write forms. A measure's
+width comes from what sets it: the bounds, `bits`, and the value only for
+int_relative and string. It makes every check a write makes on the value and
+the declaration, except the room left in a buffer it does not have, by the
+same trap (IMPLEMENTING.md U6).
 
 ### The free functions
 
@@ -189,24 +193,28 @@ its measure functions.
 | `serialize_int128_compare(a, b)` (-1, 0, 1, signed) | same | int128 |
 | `serialize_compressed_float_params(min, max, res)` returns `max_integer_value, bits, delta` | `serialize_compressed_float_params` (out parameters become three returns) | compressed_float |
 | `serialize_float32_round(x)`, `serialize_float32_bits(x)`, `serialize_float32_from_bits(u)`, `serialize_float64_bits(x)`, `serialize_float64_from_bits(u)` | (the routes in (c)) | float |
-| `serialize_ult`, `serialize_ule`, `serialize_mask`, `serialize_shr`, `serialize_shl` | (the number model, (c)) | stream |
+| `serialize_ult`, `serialize_ule`, `serialize_mask`, `serialize_shr`, `serialize_shl` | (the number model, (c); internal, no promise: (e), "The public surface") | stream |
 
 `serialize_copy_string(source, dest_size)` (IMPLEMENTING.md U15) returns the
-copy a fixed-size destination of `dest_size` bytes holds: at most
-`dest_size - 1` bytes of `source`, stopping at its first NUL, as the
-reference's helper. A Lobster string is counted, so the copy is returned
-rather than written through a pointer. `dest_size < 1` aborts.
+copy a fixed-size destination of `dest_size` bytes holds, on the source's
+bytes: those before its first NUL; if there are more than `dest_size - 1`,
+the first `dest_size - 1`, then bytes dropped from the end while the first
+byte left out is a UTF-8 continuation byte (`10xxxxxx`), so the copy never
+ends inside a character and `serialize_string` with `buffer_size =
+dest_size` accepts it. A Lobster string is a value, so the prefix is returned
+rather than written through a pointer. `dest_size < 1` is write misuse and
+traps (U9).
 
 **serialize_object.** serialize.c has no object operation; STANDARD.md does.
 `s.serialize_object(o)` refuses on a failed stream before calling anything
 (STANDARD.md, Reader Obligations: zero-bit reads consult the latch). Otherwise
 it calls `o.serialize(s)`. That is the caller's own generic function, which is
-specialized per stream and returns `true` on success. When it returns `false`,
-the stream latches through `s.fail(serialize_refusal_rejected)`, so a refused
-object leaves the stream terminal: a refusal inside the object keeps its own
-first reason, and an object that refuses a decoded value of its own, with no
-stream refusal, reports `rejected` (standard 2.1; IMPLEMENTING.md U2). On a
-measure it latches nothing and answers `false` (U6). The operation adds no
+specialized per stream and returns `true` on success. When it returns `false`
+on a read, the stream latches through `s.fail(serialize_refusal_rejected)`, so
+a refused object leaves the stream terminal: a refusal inside the object keeps
+its own first reason, and an object that refuses a decoded value of its own,
+with no stream refusal, reports `rejected` (standard 2.1; IMPLEMENTING.md U2).
+On a write or a measure it records nothing and answers `false` (U6, U9). The operation adds no
 bytes of its own. A caller refusing outside any object calls `s.reject()`.
 
 **bool.** A Lobster `bool` is an enum. A read returns `bool(bit)`.
@@ -302,8 +310,9 @@ hetzner2 measurements agree):
 - **popcount** exists and may serve bit length.
 - **The int32 domain.** A parameter whose C type is `int32` (the bounds of
   `serialize_int` and `serialize_fixed32`, and `previous` in int_relative) is
-  checked as an int32 at the call, and anything else aborts, (e). A value the
-  C type could hold but the operation refuses latches instead.
+  checked as an int32 at the call, and anything else traps on a write or a
+  measure, (e). A value the C type could hold but the operation refuses traps
+  too: write misuse has one mechanism (IMPLEMENTING.md U9).
 
 **float32.** Lobster's `float` is f64 only. A float32 is rounded, and its bits
 are produced, through a 16-byte scratch string the float family owns,
@@ -366,7 +375,7 @@ Decided:
   through `pack_bytes` and `unpack_bytes` (bitpacker), using whole 64-bit
   words where the run allows.
 - **Strings.** A string's payload is its bytes, and `length(s)` is its byte
-  length. On a write, a string longer than `buffer_size - 1` latches (e). A
+  length. On a write, a string longer than `buffer_size - 1` traps (e). A
   read returns a fresh string, because Lobster strings are values, so the
   read costs one copy. The reader refuses a NUL in the payload and malformed
   UTF-8 by its own check, equal to serialize.c's. Lobster's
@@ -377,58 +386,70 @@ Decided:
 **The writer is STRICT.** For every value, it emits exactly the bytes
 serialize.c v2.0.0 emits. serialize.c's write path is trusted and asserts in
 debug builds only (its ERRORS block, STANDARD.md's writes-trusted doctrine).
-This port has no NDEBUG, and every Lobster build runs the same code, so
-serialize.c's write contracts split in two, as the brief rules:
+This port has no NDEBUG and no unchecked build: every Lobster build runs the
+same code, so it is a checked build, always, and traps in every run
+(IMPLEMENTING.md U9).
 
-- **Latch.** A value outside its range and a full buffer latch the stream and
-  write nothing for that call. "A value outside its range" covers: `value`
-  outside `[min, max]`, a bits value not below `2^bits`, a uint8, uint16 or
-  uint32 outside `[0, 2^n)`, a string too long for `buffer_size`, a string
-  with a zero byte or that is not well-formed UTF-8 (NUL first, as on read),
-  a float or double that is NaN or an infinity (a finite double past FLT_MAX
-  narrows to an infinity), and an int_relative `current` that is past
-  2^31 - 1. Each latches with the reason a reader would give the same bytes. In serialize.c these are asserts, and in a release build they
-  write wrong bytes or overrun the buffer; this port refuses them instead. The
-  bounds check is of the whole operation's width before any bit moves
-  (`write_gate(bits)` in src/serialize_stream.lobster), so a refused wide
-  write leaves no dangling low word. A latched write stream is terminal: every
-  later write returns `false` and writes nothing.
-- **Abort, on a write or a measure.** API misuse, the asserts that concern
-  the caller's own parameters, aborts on a write or a measure stream: that
-  abort and the latch above are this port's one write-misuse mechanism
-  (IMPLEMENTING.md U9). On a READ stream the same misuse never aborts: it
-  refuses `value_out_of_range` before any bit moves, and a stream that
-  already failed keeps its first reason (U7, U16). `fail` and `reject` never
-  abort on any stream. The abort prints `serialize: <rule>` and exits 70,
-  through `serialize_abort` in src/serialize_stream.lobster, which uses
-  `return from program` so that `--runtime-no-asserts` cannot remove it. The
-  rules:
+**One write-misuse mechanism: the trap (IMPLEMENTING.md U9).** Every write
+and measure misuse traps at the call, before any bit of the operation is
+written. The trap is `serialize_abort` in src/serialize_stream.lobster: it
+prints `serialize: <rule>` and exits 70, through `return from program`, so
+`--runtime-no-asserts` cannot remove it. Write misuse never latches: a write
+stream has no refusal state for misuse to set, no misuse records a reason or
+makes a later operation fail, and none returns `false`. `value_out_of_range`,
+`non_finite_float`, `invalid_utf8`, `embedded_nul` and `past_end` are a
+reader's reasons only. Write misuse is:
+
+- a value outside its range or its bit width: `value` outside `[min, max]`
+  (int, int64, int128, fixed), a bits value not below `2^bits`, a uint8,
+  uint16 or uint32 outside `[0, 2^n)`, an int_relative `current` past
+  2^31 - 1 or not above `previous`, all checked on the caller's value as
+  passed, before anything narrows it (U8);
+- a float or double that is NaN or an infinity, tested on the bits after
+  the narrowing (a finite double past FLT_MAX narrows to an infinity, and
+  that is what would be sent), and a compressed_float value that is not
+  finite, which traps and is never clamped;
+- text that holds a NUL (checked first, as on read), is not well-formed
+  UTF-8, or does not fit `buffer_size - 1` (U3, U4);
+- an operation that does not fit the room left in the buffer, checked once
+  with the whole operation's width, align and payload included, before any
+  bit moves (`write_gate(bits)`; U10);
+- a write buffer that is not a multiple of 8 bytes (U1);
+- `reject()` on a write or a measure;
+- a bad declaration (U16):
   - bits outside [1,32] (`serialize_bits`) or [1,64] (`serialize_bits64`)
   - `min > max` on any ranged operation (int, int64, int128, fixed)
-  - an int32 parameter outside int32
+  - an int32 parameter outside int32 (U5)
   - a bad Q format: `integer_bits < 1`, `fraction_bits < 0`, or
     `integer_bits + fraction_bits` other than 32, 64 or 128 for the storage
     (STANDARD.md fixed)
   - compressed_float with `min >= max` or `res <= 0`, or a non-finite delta or
-    value count (serialize.c's asserts); a non-finite value on write; and, on
-    the write path only, a declaration whose top integer decodes non-finite
-    (`min + delta` rounded once to float32: STANDARD.md compressed_float). A
-    reader never aborts on it: it refuses the decode as `non_finite_float`.
+    value count (serialize.c's asserts); and a declaration whose top integer
+    decodes non-finite (`min + delta` rounded once to float32: STANDARD.md
+    compressed_float). A reader never traps on it: it refuses the decode as
+    `non_finite_float`.
   - precomputed constants with `max_integer_value` outside `[1, 4294967040]`
     (`serialize_bits_required` works in the uint32 domain, so a wider value
     would pass with a masked width: the audit of 2026-10-27), `bits` other
     than `serialize_bits_required(0, max_integer_value)`, or `delta <= 0` or
     non-finite
   - an int_relative `previous` outside [0, 2^31 - 1]
-  - `buffer_size < 1`
-  - a negative `bytes`, or `bytes` past the data's length (on a read, the
-    destination's capacity: U16)
-  - a write buffer that is not a multiple of 8 bytes
-  - a read that breaks the slack contract (refused at initialization, never
-    an abort)
+  - `buffer_size < 1`, and `serialize_copy_string`'s `dest_size < 1`
+  - a negative `bytes`, or `bytes` past the data's length
 
-  The same contracts hold on the measure stream, where it has the argument;
-  otherwise a measure never refuses (STANDARD.md, The Measure Stream).
+A measure makes every one of these checks except room and the buffer's size,
+which it does not have, by the same trap, and latches nothing (U6).
+
+`fail(reason)` on a write or a measure returns `false`, records nothing, and
+never traps: it is the path every refusal takes, so a serialize function
+shared by the read and write sides can call it. A nested object whose
+serialize returns `false` on a write or a measure makes `serialize_object`
+return `false`, and records nothing.
+
+On a READ stream the same misuse never traps: it refuses `value_out_of_range`
+before any bit moves, and a stream that already failed keeps its first
+reason (U7, U16). A read that breaks the slack contract is refused at
+initialization, never trapped.
 
 **Reads forgive nothing.** Every value has exactly one encoding (STANDARD.md,
 Reader Obligations), so a reader refuses every stream a conforming writer
@@ -489,18 +510,73 @@ this port changed for 2.1 has a reversed witness in tools/controls/witnesses.txt
 |---|---|
 | U1 | write buffers are a multiple of 8 bytes, else abort (TestWriteBufferMustBeWords) |
 | U2 | `s.reject()` and `serialize_object` latch `rejected` on a read, terminal, first reason wins (TestU2Reject, TestU2ObjectLatchesRejected; the `reject-reason` and `object-latch-rejected` controls) |
-| U3, U4 | a string write latches `embedded_nul` or `invalid_utf8` and writes nothing; a Lobster string is bytes and goes on the wire as given, with no codec; a measure answers `false` for the same text (TestU3U4MeasureFollowsTheWriter) |
+| U3, U4 | a string with a NUL or not well-formed UTF-8 traps on a write and on a measure, and writes nothing; a Lobster string is bytes and goes on the wire as given, with no codec (TestU9WriteStringNulTraps, TestU9WriteStringBadUtf8Traps, TestU3U4MeasureFollowsTheWriter, TestU6MeasureString*Traps) |
 | U5 | `serialize_int` bounds outside int32 abort on a write or a measure and refuse on a read (TestU5IntBoundsOutsideInt32AbortOnWrite, TestU7ReadMisuseRefuses) |
-| U6 | a measure's `fail` latches nothing (TestU6MeasureRefusesNothing) |
+| U6 | a measure makes every check a write makes, except room, by the trap, and latches nothing; its `fail` and a refusing object return `false` and record nothing (TestU6Measure*Traps, TestU6MeasureRefusesNothing, TestU6MeasureFailAndObjectRecordNothing) |
 | U7, U16 | read misuse and bad declarations refuse `value_out_of_range` (TestU7ReadMisuseRefuses, TestU16PrecomputedMaxIntegerValueDomain) |
-| U8 | an over-wide value latches on a write (TestBitpacker's write refusals) |
-| U9 | one mechanism: latch for values, abort for declarations, on a write; `fail` and `reject` never abort |
-| U10 | the whole operation's width is gated before a bit moves (TestU10WholeOperationRoom) |
+| U8 | an over-wide value traps on a write, checked on the caller's value (TestU9WriteBitsOverWideTraps, TestBitpackerWriteOverWideTraps) |
+| U9 | one mechanism, the trap (`serialize_abort`, exit 70), in every run: values, declarations, room and `reject` on a write or a measure; never a latch; `fail` and a refusing object return `false` and record nothing (test/uniform/u9_test.lobster) |
+| U10 | the whole operation's width is gated before a bit moves, and an operation that does not fit traps (TestU10WholeOperationRoom, TestU9WriteStringPayloadPastEndTraps) |
 | U11 | flush is required |
 | U12 | `serialize_end` on a write or a measure returns `true` (TestU12EndOnWriteAndMeasure) |
 | U13 | no re-initialization |
 | U14 | `serialize_refusal_name`, `"none"` for none, and a public `fail`; no reason or one outside the list records `rejected` (TestU14RefusalNamesAndFail) |
-| U15 | the extra is `serialize_bits64`; `serialize_compressed_float_precomputed` and `serialize_copy_string` exist (TestU15CopyString) |
+| U15 | the extra is `serialize_bits64`; `serialize_compressed_float_precomputed` and `serialize_copy_string` exist, and the copy backs off to a whole character (TestU15CopyString, TestU15CopyStringBacksOffToACharacter, TestU15CopyStringFeedsSerializeString); the public surface is below |
+
+**The public surface (IMPLEMENTING.md U15, "Exports beyond the reference
+operations").** Lobster has no private names, so every top-level name in
+src/ is reachable. These, and only these, are the public surface, and the
+port promises their behaviour:
+
+- **The reference operations** in the operations table above, on all three
+  streams, with `serialize_bits64` as the allowed extra, and
+  `serialize_object_base`, the class an object derives from.
+- **The three streams**: `serialize_write_stream`, `serialize_read_stream`,
+  `serialize_read_stream_padded`, `serialize_measure_stream`, and the
+  accessors the reference streams carry: `bits_processed`,
+  `bytes_processed`, `bits_available`, `bits_remaining`, `align_bits`,
+  `flush`, `ok`, `error`, `refusal`, `refusal_name`, `fail`, `reject`,
+  `is_writing`, `is_reading`.
+- **The refusal list and its name function**: `serialize_refusal` and its
+  members, `serialize_refusal_name` (U14).
+- **`serialize_copy_string`.**
+- **The reference's public helpers**: `serialize_bits_required`,
+  `serialize_bits_required64`, `serialize_bits_required128`,
+  `serialize_float32_bits_are_finite`, `serialize_float64_bits_are_finite`,
+  `serialize_compressed_float_params`, `string_utf8_valid` (the reference's
+  `string_is_valid_utf8`), and `serialize_format_version` (STANDARD.md,
+  Format version).
+- **Language necessities**, each one because Lobster lacks what the
+  reference's types give C++: the 128-bit carriers `serialize_uint128` and
+  `serialize_int128` with `serialize_uint128_make`, `serialize_int128_make`,
+  `serialize_int128_from_int64`, `serialize_uint128_equal`,
+  `serialize_int128_equal` and `serialize_int128_compare` (Lobster's int is
+  64 bits); and the float32 rounding and bit casts `serialize_float32_round`,
+  `serialize_float32_bits`, `serialize_float32_from_bits`,
+  `serialize_float64_bits`, `serialize_float64_from_bits` (Lobster's float is
+  f64 only, (c)).
+
+Everything else is internal, with no promise of name, signature or
+behaviour, and may change in any release: the number model helpers
+(`serialize_ult`, `serialize_ule`, `serialize_mask`, `serialize_shr`,
+`serialize_shl`, `serialize_sign_bit`, `serialize_bit_length64`), the
+bitpacker primitives (`pack_bits`, `pack_bits64`, `pack_bytes`, `flush_bits`,
+`unpack_bits`, `unpack_bits64`, `unpack_bytes`), the gates (`write_gate`,
+`read_gate`, `measure_bits`, `serialize_read_misuse`), the trap and the stub
+(`serialize_abort`, `serialize_stub`), every `serialize_check_*` helper,
+`serialize_fixed_width_write`, the 128-bit arithmetic (`serialize_u128_*`,
+`serialize_write_u128_bits`, `serialize_read_u128_bits`), every
+`serialize_fixed_*` helper, `serialize_int32_fits`, `serialize_check_int32`,
+`serialize_int32_min`, `serialize_int32_max`, `serialize_int_relative_bits`,
+`serialize_int_relative_bounded_max`, the compressed_float helpers
+(`serialize_compressed_float_derive`, `_validate_precomputed`,
+`_precomputed_ok`, `_check_top`, `_is_finite`, `_write_precomputed`,
+`_read_precomputed`, `_values_high`, the `_abort_*` functions),
+`string_has_nul`, `string_payload_refusal`, `serialize_float_scratch`,
+`serialize_float32_holder`, `serialize_refusal_is_reason`,
+`serialize_refusal_names`, `serialize_reference_version`, and the stream
+classes' fields other than `refusal` (`failed`, the cursors, the scratch
+word).
 
 ## (f) THE FILE LAYOUT
 
@@ -530,16 +606,16 @@ a single colon. With `s::<class>`, the stream's fields come into scope, and a
 parameter with a field's name (`data`, `buffer`) fails to compile. An arm does
 the whole operation in this order:
 
-1. Check for API misuse (e) first: on a write or a measure it aborts, in
-   every state; on a read it refuses `value_out_of_range` through
-   `s.serialize_read_misuse()`, which keeps a failed stream's first reason.
-2. Return `value, false` when `s.failed`.
-3. Make the value refusals: a write latches through `s.fail()` on a value
-   outside its range.
-4. Check the whole width once, with `s.write_gate(bits)` or
-   `s.read_gate(bits)`. A gate returns `false` and latches past the end.
-5. Move the bits with the bitpacker primitives.
-6. A read checks the decoded value, refusing through `s.fail()`, and returns
+1. Check for misuse (e) first: on a write or a measure it traps through
+   `serialize_abort`, the declaration and the value alike (U9); on a read
+   it refuses `value_out_of_range` through `s.serialize_read_misuse()`,
+   which keeps a failed stream's first reason.
+2. On a read, return `value, false` when `s.failed`.
+3. Check the whole width once, with `s.write_gate(bits)` or
+   `s.read_gate(bits)`. The write gate traps past the end (U9, U10); the
+   read gate returns `false` and latches past the end.
+4. Move the bits with the bitpacker primitives.
+5. A read checks the decoded value, refusing through `s.fail()`, and returns
    it last.
 
 A measure adds the width with `s.measure_bits(bits)`. The fixed-width aliases
