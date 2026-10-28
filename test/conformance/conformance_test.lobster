@@ -23,15 +23,6 @@ import serialize
 
 var conf_soft = false
 
-// The object an `object <n>` step hands serialize_object: it reads nothing of
-// its own and always succeeds, so whether the step refuses is the library's
-// latch alone (the reference's conformance.cpp NestedObject with no steps).
-class conf_empty_object : serialize_object_base
-    unused:int = 0
-
-def serialize(o::conf_empty_object, s) -> bool:
-    return true
-
 class cval:
     kind:int = 0     // 0 text, 1 int, 2 128-bit, 3 float bits, -1 unknown
     text:string = ""
@@ -66,6 +57,59 @@ class conf_rec:
     consumed:int = -1
     measure_at_least:int = -1
     canonical:bool = false
+    file:string = ""
+
+// One read of a vector's steps: the value each step decoded (its sentinel
+// until it runs), the first step that refused, the first runner error, and
+// how many nested objects the run is inside.
+class conf_runstate:
+    vals:[cval] = []
+    failed_at:int = -1
+    error:string = ""
+    depth:int = 0
+
+// The object an `object <n>` step hands serialize_object (the reference's
+// conformance.cpp NestedObject): its serialize runs the n steps it wraps on
+// the same stream, through the library's own serialize_object, and stops at
+// the first one that refuses. A `reject` among them is the callback returning
+// false there with no refusal of its own, which serialize_object must latch as
+// rejected (STANDARD.md, "The vector format", reject). With refuse set the
+// callback returns false at once (CallbackRefusesObject); with swallow set it
+// runs the steps at the top level and returns true whatever happened
+// (SwallowingObject).
+class conf_object : serialize_object_base
+    steps:[string] = []
+    start:int = 0
+    count:int = 0
+    st:conf_runstate = conf_runstate {}
+    called:bool = false
+    refuse:bool = false
+    swallow:bool = false
+
+def serialize(o::conf_object, s) -> bool:
+    o.called = true
+    if o.refuse:
+        return false
+    let ok = conf_nested_read(s, o)
+    if o.swallow:
+        return true
+    return ok
+
+// Only a read stream runs a nested object's steps here: the write and measure
+// legs write the steps flat (an object adds no bytes of its own).
+def conf_nested_read(r:serialize_read_stream, o:conf_object) -> bool:
+    if not o.swallow:
+        o.st.depth += 1
+    let ok = conf_read_steps(r, o.steps, o.start, o.count, o.st)
+    if not o.swallow:
+        o.st.depth -= 1
+    return ok
+
+def conf_nested_read(w:serialize_write_stream, o:conf_object) -> bool:
+    return w.ok() and o.count >= 0
+
+def conf_nested_read(m:serialize_measure_stream, o:conf_object) -> bool:
+    return m.ok() and o.count >= 0
 
 // The closed list of refusal reasons a vector may state (STANDARD.md, Refusal
 // reasons); "none" is the port's own spelling of no refusal and never a
@@ -368,13 +412,10 @@ def conf_step_read(r:serialize_read_stream, step:string) -> cval, bool:
     if length(toks) == 0:
         return conf_text_val(""), false
     let op = toks[0]
-    if op == "object":
-        // The object step goes through the library's own serialize_object, so
-        // a refused stream must refuse it on entry even when the object reads
-        // nothing (STANDARD.md, Reader Obligations, "Failure is terminal").
-        // The n steps it wraps run next on the same stream, as STANDARD.md's
-        // object section says a nested read equals the same operations unnested.
-        return conf_text_val("-"), r.serialize_object(conf_empty_object {})
+    if op == "reject":
+        // At the top level the caller refuses through the port's reject entry
+        // point (STANDARD.md, "The vector format", reject).
+        return conf_text_val("-"), r.reject()
     if op == "align":
         return conf_text_val("-"), r.serialize_align()
     if op == "end":
@@ -490,6 +531,9 @@ def conf_step_write(w, step:string, v:cval) -> bool:
     let op = toks[0]
     if op == "object":
         return true
+    // Only a refused vector carries a reject, and a writer owes it nothing.
+    if op == "reject":
+        return false
     if op == "align":
         return w.serialize_align()
     if op == "end":
@@ -662,7 +706,7 @@ def conf_sentinel(step:string) -> cval:
     if length(toks) == 0:
         return conf_text_val("")
     let op = toks[0]
-    if op == "align" or op == "end" or op == "object":
+    if op == "align" or op == "end" or op == "object" or op == "reject":
         return conf_text_val("-")
     if op == "bool":
         let v = conf_int_val(1)
@@ -729,6 +773,128 @@ def conf_run_writer_input(rec:conf_rec, steps:[string], what:string) -> bool:
             return conf_check(false, what + ": writer_input byte " + string(i) + " is " + conf_hex(read_uint8_le(w.buffer, i), 2) + ", the corpus states " + conf_hex(b, 2))
     return true
 
+// Runs steps[start, start + count) on r (the reference's run_steps). An
+// `object <n>` step goes through the library's own serialize_object, whose
+// callback runs the n steps it wraps, so a refused stream must refuse it on
+// entry without running it (STANDARD.md, Reader Obligations, "Failure is
+// terminal"). At the top level every step runs, and each one after a refusal
+// must fail, consume nothing and leave its destination alone. Inside an
+// object the run stops at the first refusal and returns false, as the
+// caller's own serialize does; a `reject` there returns false with no refusal
+// of its own.
+def conf_read_steps(r:serialize_read_stream, steps:[string], start:int, count:int, st:conf_runstate) -> bool:
+    var i = start
+    let stop = start + count
+    if stop > length(steps):
+        if st.error == "":
+            st.error = "an object wraps more steps than the vector has"
+        return false
+    while i < stop:
+        let step = steps[i]
+        let toks = tokenize(step, " ", "")
+        let op = if length(toks) > 0: toks[0] else: ""
+        let failed_before = st.failed_at >= 0
+        let before = r.bits_processed()
+        if op == "object":
+            let n = if length(toks) == 2: conf_parse_int(toks[1]) else: -1
+            if n < 0 or i + 1 + n > stop:
+                if st.error == "":
+                    st.error = "step " + string(i) + ": malformed object step " + step
+                return false
+            let o = conf_object { steps: steps, start: i + 1, count: n, st: st }
+            let ok = r.serialize_object(o)
+            if failed_before and st.error == "":
+                if ok:
+                    st.error = "step " + string(i) + " did not fail after a refusal"
+                elif o.called:
+                    st.error = "step " + string(i) + ": an object after a refusal ran its serialize"
+                elif r.bits_processed() != before:
+                    st.error = "step " + string(i) + " consumed bits after a refusal"
+            if not ok and st.failed_at < 0:
+                st.failed_at = i
+            st.vals[i] = conf_text_val("-")
+            if not ok and st.depth > 0:
+                return false
+            i += 1 + n
+        elif op == "reject" and st.depth > 0:
+            // The callback refuses on its own: it returns false and touches
+            // nothing (the reference's run_steps).
+            if st.failed_at < 0:
+                st.failed_at = i
+            return false
+        else:
+            let v, ok = conf_step_read(r, step)
+            if v.kind == -1:
+                if st.error == "":
+                    st.error = "unknown step " + step
+                return false
+            if failed_before and st.error == "":
+                if ok:
+                    st.error = "step " + string(i) + " did not fail after a refusal"
+                elif r.bits_processed() != before:
+                    st.error = "step " + string(i) + " consumed bits after a refusal"
+                // ...and writes nothing: its destination is still the sentinel.
+                elif not conf_val_equal(v, conf_sentinel(step)):
+                    st.error = "step " + string(i) + " wrote its destination after a refusal"
+            if not ok and st.failed_at < 0:
+                st.failed_at = i
+            st.vals[i] = v
+            if not ok and st.depth > 0:
+                return false
+            i += 1
+    return true
+
+def conf_base_name(path:string) -> string:
+    var i = length(path)
+    while i > 0 and substring(path, i - 1, 1) != "/":
+        i -= 1
+    return substring(path, i, length(path) - i)
+
+// The reference runner's object checks on every refused object.txt vector
+// (conformance.cpp, run_reader): on the refused stream, an object must refuse
+// on entry without running; on a fresh stream over the same bytes, a callback
+// that returns false on its own latches rejected, terminally, through a
+// zero-bit read, an object and a whole byte; and a callback that runs the
+// steps and then returns true leaves the inner refusal's reason in place.
+def conf_object_refusal_checks(rec:conf_rec, steps:[string], r:serialize_read_stream, what:string) -> bool:
+    let bits_before = r.bits_processed()
+    let reason_before = r.refusal_name()
+    let empty = conf_object {}
+    if r.serialize_object(empty):
+        return conf_check(false, what + ": the stream accepted an object read after the refusal: failure is not terminal")
+    if empty.called:
+        return conf_check(false, what + ": the object read after the refusal invoked serialize")
+    if r.bits_processed() != bits_before or r.refusal_name() != reason_before:
+        return conf_check(false, what + ": the object read after the refusal changed the cursor or the reason")
+    let refused = conf_read_stream(rec.bytes)
+    if refused.serialize_object(conf_object { refuse: true }):
+        return conf_check(false, what + ": serialize_object accepted a callback returning false")
+    if refused.refusal_name() != "rejected":
+        return conf_check(false, what + ": a callback-only refusal latched " + refused.refusal_name() + ", not rejected")
+    var probe = 12345
+    var ok = true
+    probe, ok = refused.serialize_int(probe, 7, 7)
+    if ok or probe != 12345:
+        return conf_check(false, what + ": a zero-bit read succeeded after a callback refusal")
+    let post = conf_object {}
+    if refused.serialize_object(post) or post.called:
+        return conf_check(false, what + ": an object read succeeded or ran after a callback refusal")
+    var probe_bits = 0xFF
+    probe_bits, ok = refused.serialize_bits(probe_bits, 8)
+    if ok or probe_bits != 0xFF:
+        return conf_check(false, what + ": a whole-byte read succeeded after a callback refusal")
+    if refused.refusal_name() != "rejected":
+        return conf_check(false, what + ": reads after a callback refusal changed rejected to " + refused.refusal_name())
+    let swallowed = conf_read_stream(rec.bytes)
+    let sst = conf_runstate {}
+    for(steps) step:
+        sst.vals.push(conf_sentinel(step))
+    if swallowed.serialize_object(conf_object { steps: steps, start: 0, count: length(steps), st: sst, swallow: true }):
+        return conf_check(false, what + ": serialize_object accepted a callback that returned true after an inner refusal")
+    if swallowed.refusal_name() != reason_before:
+        return conf_check(false, what + ": a callback that returned true after an inner refusal left " + swallowed.refusal_name() + ", not " + reason_before)
+    return true
+
 def conf_run_record(rec:conf_rec, what:string) -> bool:
     if rec.malformed != "":
         return conf_check(false, what + ": malformed vector: " + rec.malformed)
@@ -738,24 +904,14 @@ def conf_run_record(rec:conf_rec, what:string) -> bool:
     if rec.has_writer_input and not conf_run_writer_input(rec, steps, what):
         return false
     let r = conf_read_stream(rec.bytes)
-    let vals:[cval] = []
-    var failed_at = -1
-    for(steps) step, i:
-        let before = r.bits_processed()
-        let v, ok = conf_step_read(r, step)
-        if v.kind == -1:
-            return conf_check(false, what + ": unknown step " + step)
-        if failed_at >= 0:
-            if ok:
-                return conf_check(false, what + ": step " + string(i) + " did not fail after a refusal")
-            if r.bits_processed() != before:
-                return conf_check(false, what + ": step " + string(i) + " consumed bits after a refusal")
-            // ...and writes nothing: its destination is still the sentinel.
-            if not conf_val_equal(v, conf_sentinel(step)):
-                return conf_check(false, what + ": step " + string(i) + " wrote its destination after a refusal")
-        if not ok and failed_at < 0:
-            failed_at = i
-        vals.push(v)
+    let st = conf_runstate {}
+    for(steps) step:
+        st.vals.push(conf_sentinel(step))
+    conf_read_steps(r, steps, 0, length(steps), st)
+    if st.error != "":
+        return conf_check(false, what + ": " + st.error)
+    let vals = st.vals
+    let failed_at = st.failed_at
 
     if rec.refused:
         if failed_at < 0:
@@ -778,6 +934,8 @@ def conf_run_record(rec:conf_rec, what:string) -> bool:
                 return conf_check(false, what + ": stream not terminal")
             if r.refusal_name() != rec.reason:
                 return conf_check(false, what + ": a further read changed the reason to " + r.refusal_name())
+        if conf_base_name(rec.file) == "object.txt":
+            return conf_object_refusal_checks(rec, steps, r, what)
         return true
 
     if failed_at >= 0:
@@ -851,6 +1009,7 @@ def conf_run_file(path:string) -> int, [string], int:
     var bad = 0
     let failed:[string] = []
     for(records) rec:
+        rec.file = path
         if not conf_run_record(rec, path + " " + rec.name):
             bad += 1
             failed.push(rec.name)

@@ -8,8 +8,11 @@ import .serialize_bitpacker
 let serialize_int32_min = -2147483648
 let serialize_int32_max = 2147483647
 
+def serialize_int32_fits(value:int) -> bool:
+    return value >= serialize_int32_min and value <= serialize_int32_max
+
 def serialize_check_int32(value:int, name:string):
-    if value < serialize_int32_min or value > serialize_int32_max:
+    if not serialize_int32_fits(value):
         serialize_abort("serialize: " + name + " must be in [INT32_MIN, INT32_MAX]")
 
 // serialize_int: bits_required(min, max) bits of value - min, the offset
@@ -35,10 +38,11 @@ def serialize_int(s:serialize_write_stream, value:int, min:int, max:int):
     return value, true
 
 def serialize_int(s:serialize_read_stream, value:int, min:int, max:int):
-    serialize_check_int32(min, "min")
-    serialize_check_int32(max, "max")
-    if min > max:
-        serialize_abort("serialize: min must not be greater than max")
+    // Bounds outside int32, or min > max, are a bad declaration: on a read it
+    // is refused before any bit moves, never an abort (IMPLEMENTING.md U5,
+    // U7, U16).
+    if not serialize_int32_fits(min) or not serialize_int32_fits(max) or min > max:
+        return value, s.serialize_read_misuse()
     if s.failed:
         return value, false
     let bits = serialize_bits_required(min, max)
@@ -84,7 +88,7 @@ def serialize_int64(s:serialize_write_stream, value:int, min:int, max:int):
 
 def serialize_int64(s:serialize_read_stream, value:int, min:int, max:int):
     if min > max:
-        serialize_abort("serialize: min must not be greater than max")
+        return value, s.serialize_read_misuse()
     if s.failed:
         return value, false
     let bits = serialize_bits_required64(min, max)
@@ -205,7 +209,7 @@ def serialize_int_relative(s:serialize_write_stream, previous:int, current:int):
 
 def serialize_int_relative(s:serialize_read_stream, previous:int, current:int):
     if previous < 0 or previous > serialize_int32_max:
-        serialize_abort("serialize: int_relative previous must be in [0, INT32_MAX]")
+        return current, s.serialize_read_misuse()
     if s.failed:
         return current, false
     // Every tier reconstructs into the non-wrapping 64-bit int and leaves the

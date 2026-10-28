@@ -637,15 +637,17 @@ def TestBitpackerBits33Aborts():
     let w = serialize_write_stream(ensure_size("", 8, 0))
     w.serialize_bits(0, 33)
 
+// A bad bit count aborts on a write (and a measure); on a read it is refused,
+// never an abort (IMPLEMENTING.md U7: test/uniform's TestU7ReadMisuseRefuses).
 // expect-abort: serialize: bits must be in [1,64]
 def TestBitpackerBits64ZeroAborts():
-    let r = serialize_read_stream_padded("")
-    r.serialize_bits64(0, 0)
+    let w = serialize_write_stream(ensure_size("", 8, 0))
+    w.serialize_bits64(0, 0)
 
 // expect-abort: serialize: bits must be in [1,64]
 def TestBitpackerBits64TooWideAborts():
-    let r = serialize_read_stream_padded("")
-    r.serialize_bits64(0, 65)
+    let m = serialize_measure_stream()
+    m.serialize_bits64(0, 65)
 
 // expect-abort: serialize: byte array serialization requires byte alignment
 def TestBitpackerPackBytesUnalignedAborts():
@@ -653,9 +655,13 @@ def TestBitpackerPackBytesUnalignedAborts():
     w.serialize_bool(true)
     w.pack_bytes("abcd", 0, 4)
 
-// expect-abort: serialize: byte array serialization requires byte alignment
-def TestBitpackerUnpackBytesUnalignedAborts():
+// On a read an unaligned unpack_bytes is refused, never an abort
+// (IMPLEMENTING.md U7), and it touches neither the cursor nor the destination.
+def TestBitpackerUnpackBytesUnalignedRefuses():
     let r = serialize_read_stream_padded("abcd")
     r.serialize_bool(false)
-    let dst = ensure_size("", 4, 0)
+    let dst = ensure_size("", 4, 0x55)
     r.unpack_bytes(dst, 0, 4)
+    assert r.error() and r.refusal_name() == "value_out_of_range"
+    assert r.bits_processed() == 1
+    assert dst == ensure_size("", 4, 0x55)

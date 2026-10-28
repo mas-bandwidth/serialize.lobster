@@ -38,35 +38,55 @@ def serialize_compressed_float_abort_value():
 def serialize_compressed_float_abort_precomputed():
     serialize_abort("serialize: precomputed compressed float constants must be exactly what serialize_compressed_float_params derives")
 
-// serialize_compressed_float_params derives max_integer_value, bits and delta
-// from a declaration (STANDARD.md, compressed_float; serialize.c
+// The derivation (STANDARD.md, compressed_float; serialize.c
 // serialize_compressed_float_params): delta = max - min, values = delta / res
 // clamped to [1, 4294967040], max_integer_value = ceil(values), bits =
-// bits_required(0, max_integer_value). Each parameter is a float32, and min >=
-// max or res <= 0 is caller error (DESIGN.md (e)).
-def serialize_compressed_float_params(min:float, max:float, res:float):
+// bits_required(0, max_integer_value). Each parameter is a float32. The first
+// return is 0 for a good declaration, 1 for min >= max or res <= 0, and 2 for a
+// non-finite delta or value count: a code, so a read can refuse it
+// (IMPLEMENTING.md U7, U16) where a write or a measure aborts.
+def serialize_compressed_float_derive(min:float, max:float, res:float):
     let fmin = serialize_float32_round(min)
     let fmax = serialize_float32_round(max)
     let fres = serialize_float32_round(res)
     if not (fmin < fmax) or not (fres > 0.0):
-        serialize_compressed_float_abort_params()
+        return 1, 0, 0, 0.0
     let delta = serialize_float32_round(fmax - fmin)
     if not serialize_compressed_float_is_finite(delta):
-        serialize_compressed_float_abort_nonfinite()
+        return 2, 0, 0, 0.0
     var values = serialize_float32_round(delta / fres)
     if not serialize_compressed_float_is_finite(values):
-        serialize_compressed_float_abort_nonfinite()
+        return 2, 0, 0, 0.0
     if not (values >= 1.0):
         values = 1.0
     elif values > serialize_compressed_float_values_high:
         values = serialize_compressed_float_values_high
     let max_integer_value = ceiling(values)
-    return max_integer_value, serialize_bits_required(0, max_integer_value), delta
+    return 0, max_integer_value, serialize_bits_required(0, max_integer_value), delta
 
-// Precomputed constants must be exactly what the derivation produces
-// (DESIGN.md (e); serialize.c's asserts in the precomputed entry points).
+// serialize_compressed_float_params derives max_integer_value, bits and delta
+// from a declaration; min >= max, res <= 0 and a non-finite delta or value
+// count are caller error (DESIGN.md (e)).
+def serialize_compressed_float_params(min:float, max:float, res:float):
+    let code, max_integer_value, bits, delta = serialize_compressed_float_derive(min, max, res)
+    if code == 1:
+        serialize_compressed_float_abort_params()
+    if code == 2:
+        serialize_compressed_float_abort_nonfinite()
+    return max_integer_value, bits, delta
+
+// Precomputed constants are checked for what can be checked without the
+// declaration they came from (IMPLEMENTING.md U16): max_integer_value lies in
+// [1, 4294967040] (the derivation's clamp, so it is a uint32 and
+// bits_required, which works in the uint32 domain, cannot mask it), bits is
+// bits_required(0, max_integer_value), and delta is positive and finite.
+def serialize_compressed_float_precomputed_ok(max_integer_value:int, bits:int, delta:float) -> bool:
+    return max_integer_value >= 1 and max_integer_value <= 4294967040 and bits == serialize_bits_required(0, max_integer_value) and delta > 0.0 and serialize_compressed_float_is_finite(delta)
+
+// The write and measure check (DESIGN.md (e); serialize.c's asserts in the
+// precomputed entry points): bad constants abort.
 def serialize_compressed_float_validate_precomputed(max_integer_value:int, bits:int, delta:float):
-    if max_integer_value < 1 or bits != serialize_bits_required(0, max_integer_value) or not (delta > 0.0) or not serialize_compressed_float_is_finite(delta):
+    if not serialize_compressed_float_precomputed_ok(max_integer_value, bits, delta):
         serialize_compressed_float_abort_precomputed()
 
 // The write-side quantization (STANDARD.md, compressed_float; serialize.c
@@ -126,7 +146,10 @@ def serialize_compressed_float(s:serialize_write_stream, value:float, min:float,
     return value, ok
 
 def serialize_compressed_float(s:serialize_read_stream, value:float, min:float, max:float, res:float):
-    let max_integer_value, bits, delta = serialize_compressed_float_params(min, max, res)
+    // A bad declaration on a read is refused, never an abort (IMPLEMENTING.md U7, U16).
+    let code, max_integer_value, bits, delta = serialize_compressed_float_derive(min, max, res)
+    if code != 0:
+        return value, s.serialize_read_misuse()
     let decoded, ok = serialize_compressed_float_read_precomputed(s, value, max_integer_value, bits, delta, min)
     return decoded, ok
 
@@ -147,7 +170,9 @@ def serialize_compressed_float_precomputed(s:serialize_write_stream, value:float
     return value, ok
 
 def serialize_compressed_float_precomputed(s:serialize_read_stream, value:float, max_integer_value:int, bits:int, delta:float, min:float):
-    serialize_compressed_float_validate_precomputed(max_integer_value, bits, delta)
+    // Bad constants on a read are refused, never an abort (IMPLEMENTING.md U7, U16).
+    if not serialize_compressed_float_precomputed_ok(max_integer_value, bits, delta):
+        return value, s.serialize_read_misuse()
     let decoded, ok = serialize_compressed_float_read_precomputed(s, value, max_integer_value, bits, delta, min)
     return decoded, ok
 

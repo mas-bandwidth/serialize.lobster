@@ -2,7 +2,7 @@
 
 A simple bitpacking serializer for [Lobster](https://github.com/aardappel/lobster), wire compatible with the C++ [serialize](https://github.com/mas-bandwidth/serialize) library and [serialize.c](https://github.com/mas-bandwidth/serialize.c): the same values produce the same bytes.
 
-The wire format is serialize's STANDARD.md, format version 2.0 (serialize v2.0.1's corpus, serialize.c v2.0.0): the wire carries only integers and bytes, and every value has exactly one encoding. Floats and doubles are finite only, text is UTF-8 only (wstring is gone), and every refusal names its reason (`s.refusal_name()`, from STANDARD.md's closed list). A packet reader calls `s.serialize_end()` after the packet's top-level object, which refuses trailing bytes and set padding:
+The wire format is serialize's STANDARD.md, format version 2.0, at standard 2.1 (serialize v2.1.0's corpus, serialize.c v2.0.0): the wire carries only integers and bytes, and every value has exactly one encoding. Floats and doubles are finite only, text is UTF-8 only (wstring is gone), and every refusal names its reason (`s.refusal_name()`, from STANDARD.md's closed list). A caller refuses a value it decoded with `s.reject()`, or by returning `false` from an object's `serialize`, and the stream reports `rejected`. A read never aborts: caller misuse on a read refuses `value_out_of_range`. A packet reader calls `s.serialize_end()` after the packet's top-level object, which refuses trailing bytes and set padding:
 
 ```lobster
 import serialize

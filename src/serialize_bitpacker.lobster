@@ -96,8 +96,11 @@ def unpack_bits64(s:serialize_read_stream, bits:int) -> int:
 // `data[offset..offset+count]` in place, using whole 64-bit words where the
 // run allows (STANDARD.md, bytes; DESIGN.md (d); serialize.c serialize_read_bytes).
 def unpack_bytes(s:serialize_read_stream, data:string, offset:int, count:int):
+    // An unaligned call is caller misuse: refused, never an abort, on a read
+    // (IMPLEMENTING.md U7). serialize_bytes aligns first, so it never reaches this.
     if (s.bits_read & 7) != 0:
-        serialize_abort("serialize: byte array serialization requires byte alignment")
+        s.serialize_read_misuse()
+        return
     // Refuse a read past the end before any load, with the whole width, so no
     // byte is read outside the data and a zero-count call still tests the latch
     // (DESIGN.md (e); STANDARD.md, Reader Obligations, "Reading past the end
@@ -133,8 +136,9 @@ def serialize_bits(s:serialize_write_stream, value:int, bits:int):
     return value, true
 
 def serialize_bits(s:serialize_read_stream, value:int, bits:int):
+    // A bad bit count on a read is refused, never an abort (IMPLEMENTING.md U7, U16).
     if bits < 1 or bits > 32:
-        serialize_abort("serialize: bits must be in [1,32]")
+        return value, s.serialize_read_misuse()
     if not s.read_gate(bits):
         return value, false
     return s.unpack_bits(bits), true
@@ -161,8 +165,9 @@ def serialize_bits64(s:serialize_write_stream, value:int, bits:int):
     return value, true
 
 def serialize_bits64(s:serialize_read_stream, value:int, bits:int):
+    // A bad bit count on a read is refused, never an abort (IMPLEMENTING.md U7, U16).
     if bits < 1 or bits > 64:
-        serialize_abort("serialize: bits must be in [1,64]")
+        return value, s.serialize_read_misuse()
     if not s.read_gate(bits):
         return value, false
     return s.unpack_bits64(bits), true

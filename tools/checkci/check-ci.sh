@@ -6,11 +6,14 @@
 # naming the line, on any runs-on that is not [self-hosted, Linux, X64, fleet, serialize],
 # when ci.yml spells a toolchain URL or sha256 (the pin lives once, in the
 # Makefile), when the workflow does not run `make dist-lobster` and `make test`,
-# or when its corpus pin (SERIALIZE_REF) differs from DESIGN.md's pin. Every other workflow in
+# or when its corpus pin (SERIALIZE_REF) differs from DESIGN.md's pin. A step that can never fail
+# is refused too (audit 2026-10-27): a `make NAME` whose target no Makefile defines, and a run
+# guarded by a file test (`if [ -f ... ]`), which skips green when the file is gone. Every other workflow in
 # .github/workflows/ (the nightly functional test) is held to the same runner
 # and the same one-place pin. Its own controls are
 # scratch copies of ci.yml with `runs-on: ubuntu-latest` and with a pasted
-# sha256 and without the fork guard: every copy must fail this check, or TestCheckCI fails.
+# sha256, without the fork guard, and with the 2.0 bench step that could never fail: every copy
+# must fail this check, or TestCheckCI fails.
 set -u
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
@@ -45,6 +48,26 @@ scan_pin() {
 runs_make() {
 	grep -nE "make[[:space:]]+$2([[:space:]]|;|$)" "$1" |
 		grep -vE '^[0-9]+:[[:space:]]*#' >/dev/null
+}
+
+# scan_never_fails FILE prints every non-comment line that skips green: a run
+# guarded by a file test, or a `make NAME` whose NAME no Makefile, make/*.mk or
+# tools/roadmap/roadmap.mk defines as a target, prefixed FILE:LINE.
+scan_never_fails() {
+	f=$1
+	grep -nE 'if[[:space:]]+\[[[:space:]]+-[ef][[:space:]]' "$f" |
+		grep -vE '^[0-9]+:[[:space:]]*#' |
+		sed "s|^|$f:|; s|$| (a file test that skips green)|"
+	grep -nE 'make[[:space:]]+[A-Za-z][A-Za-z0-9_-]*' "$f" |
+		grep -vE '^[0-9]+:[[:space:]]*#' |
+		while IFS= read -r line; do
+			for target in $(printf '%s\n' "$line" | grep -oE 'make[[:space:]]+[A-Za-z][A-Za-z0-9_-]*' | sed -E 's/^make[[:space:]]+//'); do
+				if ! cat "$root/Makefile" "$root"/make/*.mk "$root/tools/roadmap/roadmap.mk" 2>/dev/null |
+					grep -qE "^$target:"; then
+					printf '%s:%s (make %s: no Makefile defines it)\n' "$f" "$line" "$target"
+				fi
+			done
+		done
 }
 
 # a_ref LINE extracts the first corpus pin (a vX.Y.Z tag or a full 40-digit
@@ -85,6 +108,12 @@ EOF_PIN
 		fail "$target_ci:1: $runs_on_count job(s) but $guard_count fork guard(s); every job needs the same-repository if:"
 	fi
 
+	while IFS= read -r never; do
+		[ -n "$never" ] && fail "$never: a CI step that can never fail"
+	done <<EOF_NEVER
+$(scan_never_fails "$target_ci")
+EOF_NEVER
+
 	for target in dist-lobster test; do
 		runs_make "$target_ci" "$target" || fail "$target_ci:1: ci.yml does not run 'make $target'"
 	done
@@ -123,6 +152,11 @@ EOF_WF_RUNS_ON
 		done <<EOF_WF_PIN
 $(scan_pin "$wf")
 EOF_WF_PIN
+		while IFS= read -r never; do
+			[ -n "$never" ] && fail "$never: a workflow step that can never fail"
+		done <<EOF_WF_NEVER
+$(scan_never_fails "$wf")
+EOF_WF_NEVER
 	done
 fi
 
@@ -154,6 +188,15 @@ if [ $# -eq 0 ] && [ "$bad" -eq 0 ]; then
 		else
 			printf 'control: scratch ci.yml without the fork guard failed as required:\n'
 			sed 's/^/  /' "$ctl/fork.out"
+		fi
+
+		cp "$ci" "$ctl/ci-bench.yml"
+		printf '      - name: Bench check\n        run: if [ -f make/bench.mk ]; then make bench-check; fi\n' >>"$ctl/ci-bench.yml"
+		if sh "$0" "$ctl/ci-bench.yml" >"$ctl/bench.out" 2>&1; then
+			fail "control: a scratch ci.yml with the bench step that can never fail passed; it must fail"
+		else
+			printf 'control: scratch ci.yml with the bench step that can never fail failed as required:\n'
+			sed 's/^/  /' "$ctl/bench.out"
 		fi
 
 		rm -rf "$ctl"

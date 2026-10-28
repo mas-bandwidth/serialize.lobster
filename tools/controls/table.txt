@@ -14,6 +14,12 @@
 # serialize_object's latch (the refusal on entry and the one on exit); the
 # lines are identical across the three streams, so all three are patched and
 # only the read stream's can change a vector.
+# object-latch-rejected: the 2.0 latch, recording no reason. The write and
+# read lines are identical, so both are patched; the stream is still marked
+# failed, and falls through to `return s.ok()`, which is false, so only the
+# reason goes red (the reference's control does the same). The measure's own
+# line latches nothing and is not this rule.
+# reject-reason: reject refuses under a wire rule's name.
 align-padding	src/serialize_stream.lobster	1	    if n > 0 and s.unpack_bits(n) != 0:	    if n > 0 and s.unpack_bits(n) == 0xFFFFFFFF:
 ranged-reconstruction	src/serialize_int.lobster	1	    return min + offset, true	    return offset, true
 ranged-range	src/serialize_int.lobster	1	    if offset > span:	    if offset > span + 0xFFFFFFFF:
@@ -31,3 +37,5 @@ int64-through-double	src/serialize_int.lobster	1	    let result = min + offset	 
 wrong-reason	src/serialize_bytes.lobster	1	        return serialize_refusal_embedded_nul	        return serialize_refusal_invalid_utf8
 object-terminal	src/serialize_object.lobster	3	    if s.failed:	    if s.failed and not s.failed:
 object-terminal	src/serialize_object.lobster	3	    return s.ok()	    return true
+object-latch-rejected	src/serialize_object.lobster	2	        return s.fail(serialize_refusal_rejected)	        s.failed = true
+reject-reason	src/serialize_stream.lobster	1	    return s.fail(serialize_refusal_rejected)	    return s.fail(serialize_refusal_value_out_of_range)

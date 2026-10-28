@@ -303,6 +303,10 @@ def strings_exec_step(s, rec:strings_record, pos:int, values:[string], vpos:int)
             ok = s.serialize_align()
             if ok:
                 values.push("-")
+        elif kind == "reject":
+            // Inside an object: the callback refuses on its own, and
+            // serialize_object latches rejected (STANDARD.md, reject).
+            ok = false
         else:
             ok = false
         return pos + 1, vpos, ok
@@ -477,9 +481,11 @@ def TestSerializeStringsBufferSizeAborts():
     var ok = true
     v, ok = w.serialize_string(v, 0)
 
+// On a write it aborts; on a read a negative count is refused, never an abort
+// (IMPLEMENTING.md U7: test/uniform).
 // expect-abort: serialize: bytes must not be negative
 def TestSerializeStringsNegativeBytesAborts():
-    let r = serialize_read_stream_padded("")
+    let w = serialize_write_stream(ensure_size("", 8, 0))
     var v = ""
     var ok = true
-    v, ok = r.serialize_bytes(v, -1)
+    v, ok = w.serialize_bytes(v, -1)

@@ -9,6 +9,10 @@ import .serialize_stream
 // subclass that overrides serialize.
 abstract class serialize_object_base:
     def serialize(s) -> bool:
+        // On a read this is caller misuse, refused and never an abort
+        // (IMPLEMENTING.md U7).
+        if s.is_reading():
+            return s.fail(serialize_refusal_value_out_of_range)
         serialize_abort("serialize: object must define serialize")
         return false
 
@@ -16,14 +20,16 @@ abstract class serialize_object_base:
 // of its own (STANDARD.md, object). A latched stream refuses before the object
 // runs; a false return latches and leaves the stream terminal (DESIGN.md (a)).
 // A refusal inside the object keeps its own reason (the first one latched);
-// an object that returns false on its own, with no stream refusal, rejected a
-// decoded value of its own, and latches value_out_of_range.
+// an object that returns false on its own, with no stream refusal, is its
+// caller's refusal and latches rejected (STANDARD.md, Refusal reasons;
+// IMPLEMENTING.md U2). On a measure nothing latches (U6): the object's false
+// is answered with false.
 def serialize_object(s:serialize_write_stream, object:serialize_object_base) -> bool:
     if s.failed:
         return false
     let ok = object.serialize(s)
     if not ok:
-        return s.fail(serialize_refusal_value_out_of_range)
+        return s.fail(serialize_refusal_rejected)
     return s.ok()
 
 def serialize_object(s:serialize_read_stream, object:serialize_object_base) -> bool:
@@ -31,7 +37,7 @@ def serialize_object(s:serialize_read_stream, object:serialize_object_base) -> b
         return false
     let ok = object.serialize(s)
     if not ok:
-        return s.fail(serialize_refusal_value_out_of_range)
+        return s.fail(serialize_refusal_rejected)
     return s.ok()
 
 def serialize_object(s:serialize_measure_stream, object:serialize_object_base) -> bool:
@@ -39,5 +45,5 @@ def serialize_object(s:serialize_measure_stream, object:serialize_object_base) -
         return false
     let ok = object.serialize(s)
     if not ok:
-        return s.fail(serialize_refusal_value_out_of_range)
+        return false
     return s.ok()
