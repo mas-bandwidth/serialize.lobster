@@ -486,8 +486,12 @@ def conf_step_read(r:serialize_read_stream, step:string) -> cval, bool:
         return conf_float_val(f, serialize_float32_bits(f), 8), ok
     if op == "bytes":
         let count = conf_parse_int(toks[1])
+        // the destination holds at least `count` bytes (a shorter one is caller
+        // misuse, refused); the sentinel pattern repeats to fill it
         let sentinel = conf_string_from_bytes(conf_bytes("53 45 4E 54 49 4E 45 4C"))
         var data = sentinel
+        while length(data) < count:
+            data = data + sentinel
         var ok = true
         data, ok = r.serialize_bytes(data, count)
         if ok and count < length(data):
