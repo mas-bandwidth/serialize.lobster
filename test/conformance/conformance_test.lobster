@@ -732,7 +732,14 @@ def conf_sentinel(step:string) -> cval:
     if op == "float" or op == "compressed_float":
         let f = serialize_float32_from_bits(serialize_float32_bits(123.5))
         return conf_float_val(f, serialize_float32_bits(f), 8)
-    if op == "bytes" or op == "string":
+    if op == "bytes":
+        // the untouched destination: the sentinel pattern repeated to hold the count
+        var untouched = "SENTINEL"
+        let count = conf_parse_int(toks[1])
+        while length(untouched) < count:
+            untouched = untouched + "SENTINEL"
+        return conf_text_val(conf_hex_bytes(untouched))
+    if op == "string":
         return conf_text_val(conf_hex_bytes("SENTINEL"))
     if op == "fixed":
         let storage = conf_parse_int(toks[1]) + conf_parse_int(toks[2])
