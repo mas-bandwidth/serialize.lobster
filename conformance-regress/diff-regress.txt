@@ -1,0 +1,32 @@
+# Fixed regression vectors for serialize.lobster, taken from the reference's differential generator
+# (diffgen, seed 20261029 record 2815 and 1980; seed 3 record 362), as the reference wrote them.
+# The runner gave the bytes destination 8 bytes whatever the count (a count above 8 was refused as
+# misuse), and dropped an empty entry of an expect list.
+
+operation sequence
+name regress-bytes-nine-then-bits-refused-past-end
+param step = bytes 9
+param step = bits 7
+bytes 90 74 6C 3F 81 60 03 5F 3C
+expect refused past_end
+
+operation sequence
+name regress-bytes-twenty-two-refused-past-end
+param step = bytes 22
+bytes 72 61 0A EB 60 58 A1 95 65 47 F1 CB CA 89 EA 1F 7C 6E D6
+expect refused past_end
+
+operation sequence
+name regress-bytes-nine-accepted
+param step = bytes 9
+bytes 01 02 03 04 05 06 07 08 09
+expect value = 01 02 03 04 05 06 07 08 09
+consumed 72
+writer canonical
+
+operation sequence
+name regress-empty-string-states-an-empty-entry
+param step = string 12
+bytes 00 47 BF
+expect value = 
+consumed 8
