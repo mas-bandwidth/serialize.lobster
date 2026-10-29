@@ -1100,11 +1100,7 @@ def TestConformanceCorpus():
     let corpus_files = conf_corpus_files()
     if not conf_check(length(corpus_files) > 0, "conformance/ has no .txt files"):
         return
-    let files:[string] = []
-    for(corpus_files) f:
-        files.push(f)
-    for(conf_extra_files()) f:
-        files.push(f)
+    let files = corpus_files
     var bad = 0
     var total = 0
     var refused = 0
@@ -1127,6 +1123,32 @@ def TestConformanceCorpus():
             print "FAIL " + path + " " + string(b) + " bad record(s)"
     print "conformance: " + string(length(files)) + " files, " + string(total) + " records, " + string(total - bad) + " pass, " + string(refused) + " refused for their stated reason"
     if not conf_check(bad == 0, "conformance corpus: " + string(bad) + " record(s) failed"):
+        return
+
+    // The extra corpus (conformance-regress/ and the differential's generated file),
+    // run softly so every failing vector is named, then required to be all green.
+    // The controls below sweep conformance/ alone.
+    let extra_files = conf_extra_files()
+    var extra_total = 0
+    let extra_red:[string] = []
+    conf_soft = true
+    for(extra_files) path:
+        let maybe = read_file(path)
+        let records, _ops = conf_parse_records(if maybe != nil: maybe else: "")
+        for(records) rec:
+            if not conf_check(not conf_name_in(seen, rec.name), "conformance: vector name " + rec.name + " is not unique"):
+                conf_soft = false
+                return
+            seen.push(rec.name)
+        let _b, failed, count = conf_run_file(path)
+        extra_total += count
+        for(failed) n:
+            extra_red.push(n)
+    conf_soft = false
+    print "conformance extra: " + string(length(extra_files)) + " files, " + string(extra_total) + " records, " + string(length(extra_red)) + " red"
+    for(extra_red) n:
+        print "FAIL extra " + n
+    if not conf_check(length(extra_red) == 0, "conformance extra: " + string(length(extra_red)) + " vector(s) failed"):
         return
 
     // Control (STANDARD.md, "A runner discovers the directory"): an operation
