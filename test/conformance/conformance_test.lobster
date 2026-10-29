@@ -486,8 +486,12 @@ def conf_step_read(r:serialize_read_stream, step:string) -> cval, bool:
         return conf_float_val(f, serialize_float32_bits(f), 8), ok
     if op == "bytes":
         let count = conf_parse_int(toks[1])
+        // the destination holds at least `count` bytes (a shorter one is caller
+        // misuse, refused); the sentinel pattern repeats to fill it
         let sentinel = conf_string_from_bytes(conf_bytes("53 45 4E 54 49 4E 45 4C"))
         var data = sentinel
+        while length(data) < count:
+            data = data + sentinel
         var ok = true
         data, ok = r.serialize_bytes(data, count)
         if ok and count < length(data):
@@ -671,6 +675,20 @@ def conf_steps(rec:conf_rec) -> [string]:
         return rec.steps
     return conf_single_steps(rec)
 
+// The entries of an `expect value` list, split on "|" with EVERY empty entry kept:
+// an empty string states an empty entry, which tokenize would drop.
+def conf_split_bar(text:string) -> [string]:
+    let out:[string] = []
+    var start = 0
+    while true:
+        let at = find_string(text, "|", start)
+        if at < 0:
+            out.push(substring(text, start, -1))
+            break
+        out.push(substring(text, start, at - start))
+        start = at + 1
+    return out
+
 // The compare spelling for one step's expected token (STANDARD.md, "Values are
 // typed by the operation's table").
 def conf_expect_token(step:string, token:string) -> string:
@@ -728,7 +746,14 @@ def conf_sentinel(step:string) -> cval:
     if op == "float" or op == "compressed_float":
         let f = serialize_float32_from_bits(serialize_float32_bits(123.5))
         return conf_float_val(f, serialize_float32_bits(f), 8)
-    if op == "bytes" or op == "string":
+    if op == "bytes":
+        // the untouched destination: the sentinel pattern repeated to hold the count
+        var untouched = "SENTINEL"
+        let count = conf_parse_int(toks[1])
+        while length(untouched) < count:
+            untouched = untouched + "SENTINEL"
+        return conf_text_val(conf_hex_bytes(untouched))
+    if op == "string":
         return conf_text_val(conf_hex_bytes("SENTINEL"))
     if op == "fixed":
         let storage = conf_parse_int(toks[1]) + conf_parse_int(toks[2])
@@ -943,7 +968,7 @@ def conf_run_record(rec:conf_rec, what:string) -> bool:
     if r.bits_processed() != rec.consumed:
         return conf_check(false, what + ": read bits " + string(r.bits_processed()) + " != " + string(rec.consumed))
 
-    let tokens = tokenize(rec.expect_text, "|", "")
+    let tokens = conf_split_bar(rec.expect_text)
     if rec.op == "sequence":
         if length(tokens) != length(steps):
             return conf_check(false, what + ": expected " + string(length(tokens)) + " values for " + string(length(steps)) + " steps")
@@ -1084,10 +1109,23 @@ def conf_control(control:string):
         return
     print "control " + control + ": red on exactly its " + string(length(expected)) + " expected vectors of " + string(total)
 
+// The extra corpus files (tools/run_tests.sh stages conformance-regress/ and
+// SERIALIZE_CONFORMANCE_EXTRA_DIR into conformance-extra/): run in an ordinary
+// run, never swept by the controls, which read conformance/ alone.
+def conf_extra_files() -> [string]:
+    let names, _sizes, _times = scan_folder("conformance-extra", true)
+    let files:[string] = []
+    if names:
+        for(names) n:
+            if length(n) >= 4 and substring(n, length(n) - 4, -1) == ".txt":
+                files.push("conformance-extra/" + n)
+    return files
+
 def TestConformanceCorpus():
-    let files = conf_corpus_files()
-    if not conf_check(length(files) > 0, "conformance/ has no .txt files"):
+    let corpus_files = conf_corpus_files()
+    if not conf_check(length(corpus_files) > 0, "conformance/ has no .txt files"):
         return
+    let files = corpus_files
     var bad = 0
     var total = 0
     var refused = 0
@@ -1110,6 +1148,32 @@ def TestConformanceCorpus():
             print "FAIL " + path + " " + string(b) + " bad record(s)"
     print "conformance: " + string(length(files)) + " files, " + string(total) + " records, " + string(total - bad) + " pass, " + string(refused) + " refused for their stated reason"
     if not conf_check(bad == 0, "conformance corpus: " + string(bad) + " record(s) failed"):
+        return
+
+    // The extra corpus (conformance-regress/ and the differential's generated file),
+    // run softly so every failing vector is named, then required to be all green.
+    // The controls below sweep conformance/ alone.
+    let extra_files = conf_extra_files()
+    var extra_total = 0
+    let extra_red:[string] = []
+    conf_soft = true
+    for(extra_files) path:
+        let maybe = read_file(path)
+        let records, _ops = conf_parse_records(if maybe != nil: maybe else: "")
+        for(records) rec:
+            if not conf_check(not conf_name_in(seen, rec.name), "conformance: vector name " + rec.name + " is not unique"):
+                conf_soft = false
+                return
+            seen.push(rec.name)
+        let _b, failed, count = conf_run_file(path)
+        extra_total += count
+        for(failed) n:
+            extra_red.push(n)
+    conf_soft = false
+    print "conformance extra: " + string(length(extra_files)) + " files, " + string(extra_total) + " records, " + string(length(extra_red)) + " red"
+    for(extra_red) n:
+        print "FAIL extra " + n
+    if not conf_check(length(extra_red) == 0, "conformance extra: " + string(length(extra_red)) + " vector(s) failed"):
         return
 
     // Control (STANDARD.md, "A runner discovers the directory"): an operation
