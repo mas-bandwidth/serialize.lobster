@@ -46,6 +46,18 @@ if [ -n "${SERIALIZE_CONFORMANCE_CONTROLS_DIR:-}" ] && [ ! -d "$controls" ]; the
     exit 1
 fi
 
+if [ -n "${SERIALIZE_CONFORMANCE_EXTRA_DIR:-}" ]; then
+    oldifs=$IFS
+    IFS=:
+    for d in $SERIALIZE_CONFORMANCE_EXTRA_DIR; do
+        if [ ! -d "$d" ]; then
+            echo "FAIL SERIALIZE_CONFORMANCE_EXTRA_DIR entry $d is not a directory"
+            exit 1
+        fi
+    done
+    IFS=$oldifs
+fi
+
 if [ $# -gt 1 ]; then
     echo "usage: tools/run_tests.sh [name]"
     exit 2
@@ -103,6 +115,19 @@ for name in $names; do
     if [ -d "$controls" ]; then
         cp -r "$controls" "$run/conformance-controls"
     fi
+    # EXTRA CORPUS DIRECTORIES: conformance-regress/ and every directory of
+    # SERIALIZE_CONFORMANCE_EXTRA_DIR (':'-separated) go to conformance-extra/, which
+    # TestConformanceCorpus runs and the controls never sweep
+    mkdir -p "$run/conformance-extra"
+    oldifs=$IFS
+    IFS=:
+    for d in "$root/conformance-regress" ${SERIALIZE_CONFORMANCE_EXTRA_DIR:-}; do
+        [ -d "$d" ] || continue
+        for f in "$d"/*.txt; do
+            [ -f "$f" ] && cp "$f" "$run/conformance-extra/"
+        done
+    done
+    IFS=$oldifs
 
     dir_failed=0
     for file in $files; do

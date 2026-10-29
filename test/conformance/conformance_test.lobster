@@ -1084,10 +1084,27 @@ def conf_control(control:string):
         return
     print "control " + control + ": red on exactly its " + string(length(expected)) + " expected vectors of " + string(total)
 
+// The extra corpus files (tools/run_tests.sh stages conformance-regress/ and
+// SERIALIZE_CONFORMANCE_EXTRA_DIR into conformance-extra/): run in an ordinary
+// run, never swept by the controls, which read conformance/ alone.
+def conf_extra_files() -> [string]:
+    let names, _sizes, _times = scan_folder("conformance-extra", true)
+    let files:[string] = []
+    if names:
+        for(names) n:
+            if length(n) >= 4 and substring(n, length(n) - 4, -1) == ".txt":
+                files.push("conformance-extra/" + n)
+    return files
+
 def TestConformanceCorpus():
-    let files = conf_corpus_files()
-    if not conf_check(length(files) > 0, "conformance/ has no .txt files"):
+    let corpus_files = conf_corpus_files()
+    if not conf_check(length(corpus_files) > 0, "conformance/ has no .txt files"):
         return
+    let files:[string] = []
+    for(corpus_files) f:
+        files.push(f)
+    for(conf_extra_files()) f:
+        files.push(f)
     var bad = 0
     var total = 0
     var refused = 0
