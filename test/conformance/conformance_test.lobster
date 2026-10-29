@@ -675,6 +675,20 @@ def conf_steps(rec:conf_rec) -> [string]:
         return rec.steps
     return conf_single_steps(rec)
 
+// The entries of an `expect value` list, split on "|" with EVERY empty entry kept:
+// an empty string states an empty entry, which tokenize would drop.
+def conf_split_bar(text:string) -> [string]:
+    let out:[string] = []
+    var start = 0
+    while true:
+        let at = find_string(text, "|", start)
+        if at < 0:
+            out.push(substring(text, start, -1))
+            break
+        out.push(substring(text, start, at - start))
+        start = at + 1
+    return out
+
 // The compare spelling for one step's expected token (STANDARD.md, "Values are
 // typed by the operation's table").
 def conf_expect_token(step:string, token:string) -> string:
@@ -954,7 +968,7 @@ def conf_run_record(rec:conf_rec, what:string) -> bool:
     if r.bits_processed() != rec.consumed:
         return conf_check(false, what + ": read bits " + string(r.bits_processed()) + " != " + string(rec.consumed))
 
-    let tokens = tokenize(rec.expect_text, "|", "")
+    let tokens = conf_split_bar(rec.expect_text)
     if rec.op == "sequence":
         if length(tokens) != length(steps):
             return conf_check(false, what + ": expected " + string(length(tokens)) + " values for " + string(length(steps)) + " steps")
