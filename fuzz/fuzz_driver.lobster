@@ -366,7 +366,31 @@ def fz_check_terminal(r:serialize_read_stream, reason:string) -> bool:
         return false
     return true
 
+// sra-lobster-1: retained declaration seeds plus a count drawn from each
+// generated/mutated packet exercise the constructor independently of the C
+// oracle, whose count parameter has a different native width.
+def fz_check_initialization(bytes:string):
+    let padded = ensure_size("", length(bytes) + 8, 0xA5)
+    write_substring(padded, 0, bytes, false)
+    let counts = [
+        -1, length(bytes) + 1, 0x0FFFFFFFFFFFFFFF, 0x1000000000000000,
+        0x7FFFFFFFFFFFFFF7, 0x7FFFFFFFFFFFFFF8, 0x7FFFFFFFFFFFFFF9,
+        0x7FFFFFFFFFFFFFFA, 0x7FFFFFFFFFFFFFFB, 0x7FFFFFFFFFFFFFFC,
+        0x7FFFFFFFFFFFFFFD, 0x7FFFFFFFFFFFFFFE, 0x7FFFFFFFFFFFFFFF,
+        read_uint64_le(padded, 0)
+    ]
+    for(counts) count:
+        let r = serialize_read_stream(padded, count)
+        let valid = count >= 0 and count <= length(bytes)
+        if r.ok() != valid or r.bits_processed() != 0 or r.bits_remaining() != (if valid: count * 8 else: 0):
+            print "sra-lobster-1: initialization bound failed for count " + string(count)
+            assert false
+        if not valid and not fz_check_terminal(r, "value_out_of_range"):
+            print "sra-lobster-1: initialization refusal was not terminal"
+            assert false
+
 def fz_run_read(bytes:string, ops:[string], id:int, src:string) -> string:
+    fz_check_initialization(bytes)
     let r = serialize_read_stream_padded(bytes)
     var acc = true
     var step = length(ops)

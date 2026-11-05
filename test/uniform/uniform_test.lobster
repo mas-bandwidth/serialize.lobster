@@ -27,6 +27,37 @@ def uniform_refused(r:serialize_read_stream, ok:bool, unchanged:bool, what:strin
         print "FAIL " + what + ": ok " + string(ok) + ", value unchanged " + string(unchanged) + ", refused as " + r.refusal_name() + ", consumed " + string(r.bits_processed())
         assert false
 
+// sra-lobster-1: declaration arithmetic cannot manufacture a healthy stream
+// with a negative bit count, including for zero-bit reads (U7, U16).
+def TestAuditReadInitializationBounds():
+    let bad_counts = [
+        -1, 0x0FFFFFFFFFFFFFFF, 0x1000000000000000,
+        0x7FFFFFFFFFFFFFF7, 0x7FFFFFFFFFFFFFF8, 0x7FFFFFFFFFFFFFF9,
+        0x7FFFFFFFFFFFFFFA, 0x7FFFFFFFFFFFFFFB, 0x7FFFFFFFFFFFFFFC,
+        0x7FFFFFFFFFFFFFFD, 0x7FFFFFFFFFFFFFFE, 0x7FFFFFFFFFFFFFFF
+    ]
+    for(bad_counts) bytes:
+        let r = serialize_read_stream("", bytes)
+        var value = 77
+        var ok = true
+        value, ok = r.serialize_int(value, 7, 7)
+        uniform_refused(r, ok, value == 77, "initialization count " + string(bytes))
+        assert r.bits_remaining() == 0
+        assert not r.serialize_align() and not r.serialize_end()
+        value, ok = r.serialize_uint8(value)
+        assert not ok and value == 77 and r.bits_processed() == 0
+        assert r.refusal_name() == "value_out_of_range"
+    // Exactly eight slack bytes, one byte short, and empty packets.
+    for(25) allocated:
+        let data = ensure_size("", allocated, 0xA5)
+        for(18) bytes:
+            let r = serialize_read_stream(data, bytes)
+            let valid = bytes <= allocated - 8
+            assert r.ok() == valid
+            assert r.bits_processed() == 0
+            assert r.bits_remaining() == (if valid: bytes * 8 else: 0)
+            assert r.refusal_name() == (if valid: "none" else: "value_out_of_range")
+
 // The object a test hands serialize_object: it reads `bits` bits (none for
 // 0), then returns `result`.
 class uniform_object : serialize_object_base

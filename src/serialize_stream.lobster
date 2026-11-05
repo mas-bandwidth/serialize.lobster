@@ -192,7 +192,10 @@ constructor serialize_write_stream(buffer:string):
 // initialization as value_out_of_range over no bits, decided by its own
 // arguments, never later by data. A reader never traps (IMPLEMENTING.md U7).
 constructor serialize_read_stream(data:string, bytes:int):
-    if bytes < 0 or length(data) < bytes + 8:
+    // Check before addition/multiplication can wrap (U7, U16). Subtracting
+    // slack from the nonnegative string length is representable even when
+    // the allocation is shorter than the slack itself.
+    if bytes < 0 or bytes > 0x0FFFFFFFFFFFFFFF or bytes > length(data) - 8:
         return serialize_read_stream { data: data, num_bits: 0, failed: true, refusal: serialize_refusal_value_out_of_range }
     return serialize_read_stream { data: data, num_bits: bytes * 8 }
 
