@@ -391,6 +391,12 @@ def fz_check_initialization(bytes:string):
 
 def fz_run_read(bytes:string, ops:[string], id:int, src:string) -> string:
     fz_check_initialization(bytes)
+    // sra-lobster-2: retained invalid-span seeds on every generated/mutant
+    // buffer reach the public UTF-8 helper before any byte can be accessed.
+    for([-1, length(bytes) + 1, 0x7FFFFFFFFFFFFFFF]) count:
+        if string_utf8_valid(bytes, count):
+            print "sra-lobster-2: invalid UTF-8 scan span accepted"
+            assert false
     let r = serialize_read_stream_padded(bytes)
     var acc = true
     var step = length(ops)
