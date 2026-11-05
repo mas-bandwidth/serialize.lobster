@@ -14,6 +14,9 @@ import .serialize_int
 // surrogates, values above U+10FFFF and truncated sequences all fail
 // (STANDARD.md, string, "Readers must refuse malformed string payloads").
 def string_utf8_valid(data:string, n:int) -> bool:
+    // This helper is public: invalid caller spans refuse before any access.
+    if n < 0 or n > length(data):
+        return false
     var i = 0
     while i < n:
         let lead = read_uint8_le(data, i)

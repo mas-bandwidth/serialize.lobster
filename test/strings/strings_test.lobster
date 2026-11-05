@@ -9,6 +9,21 @@
 // own count of operation lines.
 import serialize
 
+// sra-lobster-2: the exported validator refuses an invalid byte span before
+// inspecting it; a negative count is not a valid empty string.
+def TestAuditUtf8ScanBounds():
+    assert not string_utf8_valid("A", -1)
+    assert string_utf8_valid("", 0)
+    assert string_utf8_valid("A", 0)
+    assert string_utf8_valid("A", 1)
+    assert string_utf8_valid("\xC2\xA2", 2)
+    assert not string_utf8_valid("\xC2\xA2", 1)
+
+def TestAuditUtf8ScanPastEnd():
+    assert not string_utf8_valid("A", 2)
+    assert not string_utf8_valid("", 1)
+    assert not string_utf8_valid("A", 0x7FFFFFFFFFFFFFFF)
+
 struct strings_record:
     op:string = ""
     name:string = ""
