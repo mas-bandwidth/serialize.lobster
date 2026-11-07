@@ -99,7 +99,7 @@ permissions:
 
 jobs:
   caa:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, fleet, serialize]
     steps:
       # Pull requests only. `github.event.issue.pull_request` is present only
       # when an issue_comment was posted on a PR; on a plain issue it is null
