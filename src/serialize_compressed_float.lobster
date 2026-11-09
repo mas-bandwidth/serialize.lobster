@@ -122,7 +122,7 @@ def serialize_compressed_float_read_precomputed(s:serialize_read_stream, value:f
     let integer_value = s.unpack_bits(bits)
     if integer_value > max_integer_value:
         return value, s.fail(serialize_refusal_value_out_of_range)
-    let normalized = serialize_float32_round(float(integer_value) / float(max_integer_value))
+    let normalized = serialize_float32_round(serialize_float32_round(float(integer_value)) / serialize_float32_round(float(max_integer_value)))
     let scaled = serialize_float32_round(normalized * delta)
     let decoded = serialize_float32_round(scaled + fmin)
     // The decode must be finite: every operand is finite and the integer is in

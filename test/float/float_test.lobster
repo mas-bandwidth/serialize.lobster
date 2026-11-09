@@ -573,6 +573,37 @@ def serialize_float_test_compressed_bounds():
             assert serialize_float32_bits(decoded) == serialize_float32_bits(min)
         i += 1
 
+// compressed_float rounds each operand of the normalized-fraction division to
+// float32 before dividing (STANDARD.md, compressed_float: every step rounds).
+// These declarations have more than 2^24 steps, where rounding the operands
+// first is visible in the decoded bit pattern.
+def serialize_float_test_compressed_decode_float32_operands():
+    let mins = [0.0, 0.0, 0.0, 0.0, -1000.0]
+    let maxs = [1.0e8, 1.0e8, 50331648.0, 1.0, 1000.0]
+    let resolutions = [1.0, 1.0, 1.0, 1.0e-8, 1.0e-5]
+    let integers = [16777217, 16777219, 16777223, 16777217, 16777267]
+    let expected = [0x4B800000, 0x4B800002, 0x4B800004, 0x3E2BCC77, 0xC4500E8C]
+    for(length(integers)) i:
+        let min = mins[i]
+        let max = maxs[i]
+        let res = resolutions[i]
+        let _max_integer_value, bits, _delta = serialize_compressed_float_params(min, max, res)
+        let buf = ensure_size("", 16, 0)
+        let w = serialize_write_stream(buf)
+        w.pack_bits(integers[i], bits)
+        w.flush()
+        let r = serialize_read_stream(buf, w.bytes_processed())
+        var decoded = 123.5
+        var ok = true
+        decoded, ok = r.serialize_compressed_float(decoded, min, max, res)
+        let label = "compressed decode float32 operands " + string(i)
+        serialize_float_test_check(ok, label + ": accepted read refused")
+        serialize_float_test_check(serialize_float32_bits(decoded) == expected[i], label + ": bit pattern " + string(serialize_float32_bits(decoded)) + ", the reference is " + string(expected[i]))
+    serialize_float_test_check(true, "compressed decode float32 operands")
+
+def TestSerializeFloatCompressedDecodeFloat32Operands():
+    serialize_float_test_compressed_decode_float32_operands()
+
 def TestSerializeFloat():
     serialize_float_test_run_file("float")
     serialize_float_test_run_file("double")
