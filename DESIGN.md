@@ -354,14 +354,19 @@ Decided:
 ## (d) BYTES
 
 - **The type.** Bytes are a Lobster `string` used as a byte buffer. A string
-  is a reference value, and the `write_*_le`, `write_substring` and
-  `ensure_size` builtins mutate it in place, so the change is visible through
-  every reference.
+  is a reference value with copy-on-write semantics: the `write_*_le`,
+  `write_substring` and `ensure_size` builtins return the string they stored
+  into, which is a fresh copy when the argument is read-only or shared. A
+  uniquely owned buffer, such as one built with `ensure_size`, is mutated in
+  place and returned as the same string; a read-only or shared one is left
+  untouched, so the caller must keep the returned string.
 - **Writing.** The write stream stores its words directly into the caller's
   buffer, which is the zero-copy way out. After `flush()`, the caller's own
   string holds the message in its first `bytes_processed()` bytes. The caller
   builds the buffer with `ensure_size(string_with_capacity(n), n, 0)`, `n` a
-  multiple of 8, and reuses it across messages.
+  multiple of 8, and reuses it across messages. The constructor proves with a
+  one-byte probe, restored immediately, that the buffer is writable in place,
+  and traps otherwise.
 - **Reading.** The read stream reads the caller's string in place with no copy
   when the caller holds the slack contract: `length(data) >= bytes + 8`. This
   is serialize.c's fast path. `serialize_read_stream_padded(data)` is the
@@ -369,11 +374,12 @@ Decided:
   point ... is admitted"). It takes exact-length data and pays one copy.
 - **serialize_bytes(data, bytes).** On write it sends the first `bytes` bytes
   of `data`, which must be at least that long (else abort). On read it stores
-  the bytes into `data` in place at offset 0. `data` must already be at least
-  `bytes` long (else abort), and the same string is returned. After a refusal
-  its contents are unspecified, as STANDARD.md allows. The aligned body moves
-  through `pack_bytes` and `unpack_bytes` (bitpacker), using whole 64-bit
-  words where the run allows.
+  the bytes into `data` at offset 0 and returns the resulting string: `data`
+  itself when it is writable in place, a fresh string otherwise, which the
+  caller must keep. `data` must already be at least `bytes` long (else abort).
+  After a refusal its contents are unspecified, as STANDARD.md allows. The
+  aligned body moves through `pack_bytes` and `unpack_bytes` (bitpacker),
+  using whole 64-bit words where the run allows.
 - **Strings.** A string's payload is its bytes, and `length(s)` is its byte
   length. On a write, a string longer than `buffer_size - 1` traps (e). A
   read returns a fresh string, because Lobster strings are values, so the

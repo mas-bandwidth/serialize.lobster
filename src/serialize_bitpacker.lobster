@@ -91,33 +91,37 @@ def unpack_bits64(s:serialize_read_stream, bits:int) -> int:
     return lo | serialize_shl(hi, 32)
 
 // Copies `count` bytes from a byte-aligned stream position into
-// `data[offset..offset+count]` in place, using whole 64-bit words where the
-// run allows (STANDARD.md, bytes; DESIGN.md (d); serialize.c serialize_read_bytes).
-def unpack_bytes(s:serialize_read_stream, data:string, offset:int, count:int):
+// `data[offset..offset+count]`, using whole 64-bit words where the run allows,
+// and returns the destination string. The write builtins return a fresh copy
+// when `data` is not writable in place, so that string must be threaded back to
+// the caller (STANDARD.md, bytes; DESIGN.md (d); serialize.c serialize_read_bytes).
+def unpack_bytes(s:serialize_read_stream, data:string, offset:int, count:int) -> string:
     // An unaligned call is caller misuse: refused, never an abort, on a read
     // (IMPLEMENTING.md U7). serialize_bytes aligns first, so it never reaches this.
     if (s.bits_read & 7) != 0:
         s.serialize_read_misuse()
-        return
+        return data
     // Refuse a read past the end before any load, with the whole width, so no
     // byte is read outside the data and a zero-count call still tests the latch
     // (DESIGN.md (e); STANDARD.md, Reader Obligations, "Reading past the end
     // must fail", "No read touches memory past the data's end").
     if count <= 0:
         if not s.read_gate(0):
-            return
-        return
+            return data
+        return data
     if not s.read_gate(count * 8):
-        return
+        return data
     let src = s.bits_read >> 3
+    var dest = data
     var i = 0
     while i + 8 <= count:
-        write_int64_le(data, offset + i, read_uint64_le(s.data, src + i))
+        dest = write_int64_le(dest, offset + i, read_uint64_le(s.data, src + i))
         i += 8
     while i < count:
-        write_int8_le(data, offset + i, read_uint8_le(s.data, src + i))
+        dest = write_int8_le(dest, offset + i, read_uint8_le(s.data, src + i))
         i += 1
     s.bits_read += count * 8
+    return dest
 
 // serialize_bits: bits in [1,32], value in [0, 2^bits) (STANDARD.md,
 // Bit-Level Primitives, bits; DESIGN.md (a), (e), (f)).
