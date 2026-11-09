@@ -604,6 +604,43 @@ def serialize_float_test_compressed_decode_float32_operands():
 def TestSerializeFloatCompressedDecodeFloat32Operands():
     serialize_float_test_compressed_decode_float32_operands()
 
+// A precomputed delta is a float32 (serialize.h takes `float delta`): it rounds
+// to float32 before it is checked and before it is used. 1.0e300 rounds to
+// +inf, so a read refuses the constants as value_out_of_range before any bit
+// moves, whatever the wire integer. 0.1 is not exact in float32, and every
+// decode and encode with it matches the one with its float32 rounding.
+def TestSerializeFloatPrecomputedDeltaFloat32():
+    for(2) integer:
+        let r = serialize_float_test_stream([integer])
+        var got = 123.5
+        var ok = true
+        got, ok = r.serialize_compressed_float_precomputed(got, 100, 7, 1.0e300, 0.0)
+        let label = "precomputed delta 1.0e300, integer " + string(integer)
+        serialize_float_test_check(not ok and got == 123.5, label + ": the read is refused, destination untouched")
+        serialize_float_test_check(r.refusal_name() == "value_out_of_range", label + ": refused as " + r.refusal_name())
+        serialize_float_test_check(r.bits_processed() == 0, label + ": " + string(r.bits_processed()) + " bits consumed")
+    let delta = 0.1
+    let fdelta = serialize_float32_round(delta)
+    for(11) integer:
+        let label = "precomputed delta 0.1, integer " + string(integer)
+        let a = serialize_float_test_stream([integer])
+        let b = serialize_float_test_stream([integer])
+        let got, ok = a.serialize_compressed_float_precomputed(123.5, 10, 4, delta, 0.0)
+        let want, want_ok = b.serialize_compressed_float_precomputed(123.5, 10, 4, fdelta, 0.0)
+        serialize_float_test_check(ok and want_ok, label + ": accepted read refused")
+        serialize_float_test_check(serialize_float32_bits(got) == serialize_float32_bits(want), label + ": decoded " + string(serialize_float32_bits(got)) + ", the float32 delta decodes " + string(serialize_float32_bits(want)))
+        let value = serialize_float32_round(fdelta * integer / 10.0)
+        let abuf = ensure_size("", 8, 0)
+        let bbuf = ensure_size("", 8, 0)
+        let wa = serialize_write_stream(abuf)
+        let wb = serialize_write_stream(bbuf)
+        wa.serialize_compressed_float_precomputed(value, 10, 4, delta, 0.0)
+        wb.serialize_compressed_float_precomputed(value, 10, 4, fdelta, 0.0)
+        wa.flush()
+        wb.flush()
+        serialize_float_test_check(wa.bits_processed() == 4, label + ": writer width")
+        serialize_float_test_check(read_uint8_le(abuf, 0) == read_uint8_le(bbuf, 0), label + ": encoded code")
+
 def TestSerializeFloat():
     serialize_float_test_run_file("float")
     serialize_float_test_run_file("double")
