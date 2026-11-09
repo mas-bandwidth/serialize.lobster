@@ -7,6 +7,8 @@ import .serialize_stream
 // LSB-first scratch word and commits full 8-byte little-endian words to
 // `s.buffer` (STANDARD.md, General Conventions, bits; DESIGN.md (b), (c)).
 def pack_bits(s:serialize_write_stream, value:int, bits:int):
+    if s.scratch_bits != (s.bits_written & 63):
+        serialize_abort("serialize: scratch must match the bits written")
     let v = value & serialize_mask(bits)
     s.scratch = s.scratch | serialize_shl(v, s.scratch_bits)
     let total = s.scratch_bits + bits
@@ -44,6 +46,8 @@ def flush_bits(s:serialize_write_stream):
 // any trailing partial word into `s.scratch` (STANDARD.md, bytes; DESIGN.md (d);
 // serialize.c serialize_write_bytes).
 def pack_bytes(s:serialize_write_stream, data:string, offset:int, count:int):
+    if s.scratch_bits != (s.bits_written & 63):
+        serialize_abort("serialize: scratch must match the bits written")
     if (s.bits_written & 7) != 0:
         serialize_abort("serialize: byte array serialization requires byte alignment")
     // The gate is consulted once with the whole width before any byte moves,

@@ -659,3 +659,44 @@ def TestBitpackerUnpackBytesUnalignedRefuses():
     assert r.error() and r.refusal_name() == "value_out_of_range"
     assert r.bits_processed() == 1
     assert dst == ensure_size("", 4, 0x55)
+
+// Writing bits or bytes after flush traps, on a 16-byte buffer and an 8-byte buffer.
+// expect-abort: serialize: scratch must match the bits written
+def TestBitpackerWriteBitsAfterFlush16Traps():
+    let w = serialize_write_stream(ensure_size("", 16, 0))
+    var v = 0
+    var ok = false
+    v, ok = w.serialize_bits(1, 8)
+    assert ok
+    w.flush()
+    v, ok = w.serialize_bits(1, 1)
+
+// expect-abort: serialize: scratch must match the bits written
+def TestBitpackerWriteBitsAfterFlush8Traps():
+    let w = serialize_write_stream(ensure_size("", 8, 0))
+    var v = 0
+    var ok = false
+    v, ok = w.serialize_bits(1, 8)
+    assert ok
+    w.flush()
+    v, ok = w.serialize_bits(1, 1)
+
+// expect-abort: serialize: scratch must match the bits written
+def TestBitpackerWriteBytesAfterFlush16Traps():
+    let w = serialize_write_stream(ensure_size("", 16, 0))
+    var v = 0
+    var ok = false
+    v, ok = w.serialize_bits(1, 8)
+    assert ok
+    w.flush()
+    w.pack_bytes("ab", 0, 1)
+
+// expect-abort: serialize: scratch must match the bits written
+def TestBitpackerWriteBytesAfterFlush8Traps():
+    let w = serialize_write_stream(ensure_size("", 8, 0))
+    var v = 0
+    var ok = false
+    v, ok = w.serialize_bits(1, 8)
+    assert ok
+    w.flush()
+    w.pack_bytes("ab", 0, 1)
