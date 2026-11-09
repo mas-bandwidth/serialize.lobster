@@ -8,8 +8,8 @@ the contract.
 
 **The oracle.** serialize.c v2.0.0 (`e11585b0dfbf214ed37c442d5f8b6133fd8b10df`),
 format 2.0, is the reference. This port matches it byte for byte and refusal for refusal.
-serialize.luau (branch `sprint/serialize-luau`,
-`e9acef6fee5efbb1c7b33a25843dba9aa59f6b22`) is the closest worked port and
+serialize.luau
+(`e9acef6fee5efbb1c7b33a25843dba9aa59f6b22`) is the closest worked port and
 shaped this page. Both are read and never imported. STANDARD.md's
 Implementation Law says sibling ports are never sources, so where the Luau page
 and serialize.c disagree, serialize.c and STANDARD.md decide.
@@ -281,8 +281,7 @@ The rules for this library:
 
 ## (c) THE NUMBER MODEL
 
-Measured on hulk with the pinned release binary, 2026-10-19 (the brief's
-hetzner2 measurements agree):
+Measured on a 64-core Linux bench with the pinned release binary, 2026-10-19:
 
 - **One integer type.** Lobster's `int` is signed 64-bit, and every value of
   64 bits or fewer lives in it. That covers bits, uint8 to uint64, int, int64,
@@ -318,7 +317,7 @@ hetzner2 measurements agree):
 are produced, through a 16-byte scratch string the float family owns,
 allocated once and reused. Two rounding routes and two bit routes were timed
 over 10,000,000 calls each, under the JIT and under `--cpp` with clang -O2, on
-hulk on 2026-10-19 (the program is in "The timing" below). Run 1 drove the
+a 64-core Linux bench on 2026-10-19 (the program is in "The timing" below). Run 1 drove the
 binaries directly. Run 2 was `make bench`, at nice 19 with the bench's load
 average near 24 on 64 cores.
 
@@ -701,7 +700,7 @@ name test/smoke/smoke_test.lobster.
   `LOBSTER_ENGINE=OFF`. The release binary's `--cpp` output carries the
   engine's builtin library, and an engine-less `compiled_lobster` refuses it
   with "code compiled with mismatching builtin function library" (measured).
-  `make lobster-cpp` builds both trees once, in about two minutes on hulk.
+  `make lobster-cpp` builds both trees once, in about two minutes on a 64-core Linux bench.
   clang's linker `lld` is found beside clang (`/usr/lib/llvm-18/bin` on Ubuntu
   24.04), as the CMake build's `-fuse-ld=lld` needs.
 - **Unit tests** use no real time, no sockets, no network and no outside
