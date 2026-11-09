@@ -129,9 +129,10 @@ def serialize_bytes(s:serialize_read_stream, data:string, bytes:int):
         return data, false
     if not s.read_gate(bytes * 8):
         return data, false
+    var result = data
     if bytes > 0:
-        s.unpack_bytes(data, 0, bytes)
-    return data, true
+        result = s.unpack_bytes(result, 0, bytes)
+    return result, true
 
 // A measure charges the align worst case, 7 bits, then the payload
 // (STANDARD.md, The Measure Stream; serialize.c serialize_measure_bytes).

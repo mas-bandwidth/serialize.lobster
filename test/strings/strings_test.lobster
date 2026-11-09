@@ -467,3 +467,41 @@ def TestSerializeStringsNegativeBytesAborts():
     var v = ""
     var ok = true
     v, ok = w.serialize_bytes(v, -1)
+
+// A destination that is not uniquely owned is returned as the updated string,
+// so the caller keeps the bytes read into a constant.
+def TestSerializeStringsBytesReadIntoConstantDestination():
+    let r = serialize_read_stream_padded("ABCD")
+    var dst = "0000"
+    var ok = true
+    dst, ok = r.serialize_bytes(dst, 4)
+    strings_check(ok, "constant destination: read refused")
+    strings_check(dst == "ABCD", "constant destination: got " + dst)
+    strings_check(r.bits_processed() == 32, "constant destination: bits")
+
+class strings_defaulted_destination:
+    value:string = "0000"
+
+// The same for a class field whose default is a constant.
+def TestSerializeStringsBytesReadIntoDefaultedField():
+    let r = serialize_read_stream_padded("WXYZ")
+    let holder = strings_defaulted_destination {}
+    var ok = true
+    holder.value, ok = r.serialize_bytes(holder.value, 4)
+    strings_check(ok, "defaulted field: read refused")
+    strings_check(holder.value == "WXYZ", "defaulted field: got " + holder.value)
+    strings_check(r.bits_processed() == 32, "defaulted field: bits")
+
+class strings_shared_buffer:
+    value:string = "00000000"
+
+// The write stream takes a buffer it can store into; a constant is refused.
+// expect-abort: serialize: write buffer must be a uniquely owned string
+def TestSerializeStringsWriteStreamConstantBufferTraps():
+    serialize_write_stream("00000000")
+
+// A field defaulted to a constant is refused the same way.
+// expect-abort: serialize: write buffer must be a uniquely owned string
+def TestSerializeStringsWriteStreamDefaultedFieldTraps():
+    let holder = strings_shared_buffer {}
+    serialize_write_stream(holder.value)

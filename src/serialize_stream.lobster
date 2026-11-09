@@ -184,6 +184,16 @@ class serialize_measure_stream : serialize_stream
 constructor serialize_write_stream(buffer:string):
     if length(buffer) % 8 != 0:
         serialize_abort("serialize: write buffer bytes must be a multiple of 8")
+    // The caller's string must be writable in place: a read-only or shared
+    // string makes every store return a fresh copy, leaving the caller's
+    // buffer unchanged. A one-byte probe, restored immediately, proves it.
+    if length(buffer) > 0:
+        let old = read_uint8_le(buffer, 0)
+        let probe = old ^ 0xFF
+        let stored = write_int8_le(buffer, 0, probe)
+        if read_uint8_le(buffer, 0) != probe:
+            serialize_abort("serialize: write buffer must be a uniquely owned string")
+        write_int8_le(stored, 0, old)
     return serialize_write_stream { buffer: buffer, num_bits: length(buffer) * 8 }
 
 // serialize_read_stream_init: the fast path, in place, under the slack
