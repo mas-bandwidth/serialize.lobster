@@ -37,7 +37,7 @@ CLANGXX       ?= clang++
 CLANG_BINDIR  := $(dir $(realpath $(shell command -v $(CLANG) 2>/dev/null)))
 CPP_CMAKE_ARGS := -G Ninja -DLOBSTER_ENGINE=OFF -DCMAKE_BUILD_TYPE=Release \
 	-DCMAKE_C_COMPILER=$(CLANG) -DCMAKE_CXX_COMPILER=$(CLANGXX) \
-	"-DCMAKE_C_FLAGS_RELEASE=-O2 -DNDEBUG -fwrapv" "-DCMAKE_CXX_FLAGS_RELEASE=-O2 -DNDEBUG -fwrapv"
+	"-DCMAKE_C_FLAGS_RELEASE=-O2 -DNDEBUG" "-DCMAKE_CXX_FLAGS_RELEASE=-O2 -DNDEBUG"
 
 .PHONY: all dist-lobster toolchain-lobster test test-cpp lobster-src lobster-cpp bench clean
 all: test
@@ -94,7 +94,9 @@ lobster-cpp: lobster-src
 # test-cpp: TestSerializeInt (the int64 full-range round-trips and the
 # 128-bit carry checks) through the --cpp backend, built with the flags
 # above. The driver, src/ and the conformance corpus are staged as in
-# tools/run_tests.sh, and the compiled program runs from that directory.
+# tools/run_tests.sh. The compiled program reads data files from its own
+# directory, not the working one, so it is copied into the staging directory
+# and run from there.
 test-cpp: toolchain-lobster
 	@if [ ! -x $(LOBSTER_SRC)/bin/compiled_lobster ] || [ ! -d build/lobster-tocpp ]; then $(MAKE) --no-print-directory lobster-cpp; fi
 	@rm -rf build/cpp-test && mkdir -p build/cpp-test/int
@@ -103,7 +105,8 @@ test-cpp: toolchain-lobster
 	@printf 'import int_test\nTestSerializeInt()\nprint "serialize-test-done"\n' > build/cpp-test/int/_cpp_int_test.lobster
 	@cd build/cpp-test/int && $(LOBSTER_SRC)/bin/lobster --cpp _cpp_int_test.lobster
 	@PATH=$(CLANG_BINDIR):$$PATH cmake --build build/lobster-tocpp -j 16 >>build/lobster-tocpp.log 2>&1
-	@out=$$(cd build/cpp-test/int && $(LOBSTER_SRC)/bin/compiled_lobster 2>&1); code=$$?; \
+	@cp $(LOBSTER_SRC)/bin/compiled_lobster build/cpp-test/int/
+	@out=$$(cd build/cpp-test/int && ./compiled_lobster 2>&1); code=$$?; \
 	printf '%s\n' "$$out"; \
 	if [ $$code -ne 0 ] || ! printf '%s\n' "$$out" | grep -qx 'serialize-test-done'; then \
 		echo "test-cpp FAIL: the --cpp int test did not complete"; exit 1; fi

@@ -307,9 +307,10 @@ Measured on a 64-core Linux bench with the pinned release binary, 2026-10-19:
 - **Wrapping.** Lobster's `+`, `-` and `*` on `int` wrap two's-complement and
   never trap, so offsets such as `value - min` are taken in that arithmetic and
   then read unsigned. This is STANDARD.md's "uses wrapping operations on the
-  read path". The `--cpp` build keeps the same semantics: the Makefile's
-  `CPP_CMAKE_ARGS` passes `-fwrapv` with `-O2`, and `make test` runs the
-  int64 full-range round-trips and 128-bit carry checks through that backend.
+  read path". The `--cpp` build keeps the same semantics: the pin's own CMake
+  (`dev/CMakeLists.txt`) compiles the generated C++ with `-fwrapv`, and
+  `make test` runs the int64 full-range round-trips and 128-bit carry checks
+  through that backend at `-O2`.
 - **128 bits.** Lobster has no 128-bit integer, so a 128-bit value is two int
   lanes, `{ lo, hi }`. This is serialize.c's own emulation (`serialize_u128_*`)
   and is the same wire.
@@ -674,9 +675,10 @@ message format.
   `LOBSTER` that does not resolve.
 - **The --cpp test leg.** `make test` also runs `TestSerializeInt` through the
   `--cpp` backend via `make test-cpp` (the `lobster-cpp` toolchain, clang -O2
-  with `-fwrapv`): it stages `src/`, `test/int/` and `conformance/` as the
-  runner does, compiles the driver to C++, rebuilds `compiled_lobster`, and
-  requires the done line from the compiled program.
+  with the pin's `-fwrapv`): it stages `src/`, `test/int/` and `conformance/` as the
+  runner does, compiles the driver to C++, rebuilds `compiled_lobster`, copies
+  it into the staging directory (a compiled program reads data files from its
+  own directory), runs it there, and requires the done line.
 - **Running tests.** `make test` runs every `test/*/*_test.lobster`, and
   `make test T=<name>` runs only the files of `test/<name>/`, both through
   `tools/run_tests.sh`. The runner refuses with a named FAIL, and never a
