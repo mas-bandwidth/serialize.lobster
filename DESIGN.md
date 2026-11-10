@@ -16,12 +16,12 @@ and serialize.c disagree, serialize.c and STANDARD.md decide.
 
 **The vendored standard.** `STANDARD.md`, `IMPLEMENTING.md`, `conformance/`
 and `conformance-controls/` are copied
-VERBATIM from mas-bandwidth/serialize at tag v2.1.3. They carry the 2.1.1
+VERBATIM from mas-bandwidth/serialize at tag v2.1.4. They carry the 2.1.1
 rulings: one
 write-misuse mechanism, the trap (U9); a measure checks what a write checks
 (U6); `serialize_copy_string` backs off to a whole character and the exports
 ruling (U15). The corpus and STANDARD.md are unchanged since v2.1.0, and only
-IMPLEMENTING.md's text moved. Before it the pins were tag v2.1.1
+IMPLEMENTING.md's text moved. Before it the pins were tag v2.1.3, tag v2.1.1
 (`bd3d67e23c8acc2c45eff69633dbe16c029a2cba`), tag v2.1.0
 (`884bc3098c9619d67308d9c6b5cdf38593d98b69`: format 2.0, standard 2.1, the
 `rejected` reason and the uniform rules U1 to U16), tag v2.0.1 (`b812b75cc0a75dd925af74103ab1f155b9431ac1`),
