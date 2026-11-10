@@ -524,11 +524,11 @@ this port changed for 2.1 has a reversed witness in tools/controls/witnesses.txt
 | U3, U4 | a string with a NUL or not well-formed UTF-8 traps on a write and on a measure, and writes nothing; a Lobster string is bytes and goes on the wire as given, with no codec (TestU9WriteStringNulTraps, TestU9WriteStringBadUtf8Traps, TestU3U4MeasureFollowsTheWriter, TestU6MeasureString*Traps) |
 | U5 | `serialize_int` bounds outside int32 abort on a write or a measure and refuse on a read (TestU5IntBoundsOutsideInt32AbortOnWrite, TestU7ReadMisuseRefuses) |
 | U6 | a measure makes every check a write makes, except room, by the trap, and latches nothing; its `fail` and a refusing object return `false` and record nothing (TestU6Measure*Traps, TestU6MeasureRefusesNothing, TestU6MeasureFailAndObjectRecordNothing) |
-| U7, U16 | read misuse and bad declarations refuse `value_out_of_range` (TestU7ReadMisuseRefuses, TestU16PrecomputedMaxIntegerValueDomain) |
+| U7, U16 | read misuse and bad declarations refuse `value_out_of_range` (TestU7ReadMisuseRefuses, TestU16PrecomputedMaxIntegerValueDomain); bytes of zero count aligns and copies nothing on every stream, and a Lobster string is never nil (TestU7ZeroLengthBytesAligns); every read's destination is typed (`int` is 64 bits, `bool` takes one bit, the 128-bit carriers, a string whose length the bytes read checks), so the scalar destination width rule has nothing to check |
 | U8 | an over-wide value traps on a write, checked on the caller's value (TestU9WriteBitsOverWideTraps, TestBitpackerWriteOverWideTraps) |
 | U9 | one mechanism, the trap (`serialize_abort`, exit 70), in every run: values, declarations, room and `reject` on a write or a measure; never a latch; `fail` and a refusing object return `false` and record nothing (test/uniform/u9_test.lobster) |
 | U10 | the whole operation's width is gated before a bit moves, and an operation that does not fit traps (TestU10WholeOperationRoom, TestU9WriteStringPayloadPastEndTraps) |
-| U11 | flush is required |
+| U11 | flush is required; a write after a flush that stored a partial word traps in `pack_bits` and `pack_bytes` (TestBitpackerWriteBitsAfterFlush8Traps and its three siblings) |
 | U12 | `serialize_end` on a write or a measure returns `true` (TestU12EndOnWriteAndMeasure) |
 | U13 | no re-initialization |
 | U14 | `serialize_refusal_name`, `"none"` for none, and a public `fail`; no reason or one outside the list records `rejected` (TestU14RefusalNamesAndFail) |
