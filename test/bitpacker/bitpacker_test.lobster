@@ -361,12 +361,17 @@ def test_bits_required():
     assert serialize_bits_required(-5, 5) == 4
     assert serialize_bits_required(0, 0xFFFFFFFF) == 32
     assert serialize_bits_required(-2147483648, 2147483647) == 32
+    assert serialize_bits_required(0, 4294967296) == 33
+    assert serialize_bits_required(0, 4294967301) == 33
+    assert serialize_bits_required(7, 6) == 64
 
     assert serialize_bits_required64(0, 0) == 0
     assert serialize_bits_required64(-1, -1) == 0
     assert serialize_bits_required64(0, 1) == 1
     assert serialize_bits_required64(0, 0xFFFFFFFF) == 32
     assert serialize_bits_required64(0, 0x100000000) == 33
+    assert serialize_bits_required64(0, 4294967301) == 33
+    assert serialize_bits_required64(7, 6) == 64
     assert serialize_bits_required64(0, 0x7FFFFFFFFFFFFFFF) == 63
     assert serialize_bits_required64(0, 0x8000000000000000) == 64
     assert serialize_bits_required64(0, -1) == 64
