@@ -372,7 +372,7 @@ def test_bits_required():
     assert serialize_bits_required64(0, -1) == 64
     assert serialize_bits_required64(0x8000000000000000, 0x7FFFFFFFFFFFFFFF) == 64
 
-// Rowan's mandatory check: feed VALID data with plenty of remaining bits after
+// Read latch over valid data: feed VALID data with plenty of remaining bits after
 // a forced read error (both via r.fail(reason) and via a data-triggered refusal in
 // byte 0) and prove every subsequent read stays refused, leaves its destination
 // untouched, and consumes 0 bits. Removing the latch guard in read_gate turns
