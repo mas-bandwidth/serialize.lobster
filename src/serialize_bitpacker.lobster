@@ -55,8 +55,7 @@ def pack_bytes(s:serialize_write_stream, data:string, offset:int, count:int):
     // U9, U10).
     if count <= 0:
         return
-    if not s.write_gate(count * 8):
-        return
+    s.write_gate(count * 8)
     if s.scratch_bits != 0:
         write_int64_le(s.buffer, s.word_index * 8, s.scratch)
     let dst = s.bits_written >> 3
@@ -133,8 +132,7 @@ def serialize_bits(s:serialize_write_stream, value:int, bits:int):
     if bits < 1 or bits > 32:
         serialize_abort("serialize: bits must be in [1,32]")
     serialize_check_fits(value, bits)
-    if not s.write_gate(bits):
-        return value, false
+    s.write_gate(bits)
     s.pack_bits(value, bits)
     return value, true
 
@@ -158,8 +156,7 @@ def serialize_bits64(s:serialize_write_stream, value:int, bits:int):
     if bits < 1 or bits > 64:
         serialize_abort("serialize: bits must be in [1,64]")
     serialize_check_fits(value, bits)
-    if not s.write_gate(bits):
-        return value, false
+    s.write_gate(bits)
     s.pack_bits64(value, bits)
     return value, true
 

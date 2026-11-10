@@ -1,8 +1,7 @@
 // test/smoke/smoke_test.lobster — the skeleton's smoke tests (DESIGN.md (a),
 // (c), (f), (g)): the entry compiles, every API name resolves on every stream,
-// a stub aborts with its not-implemented message, and the latch holds
-// (STANDARD.md, Reader Obligations, "Failure is terminal" and "A refused
-// primitive read must leave its destination unwritten").
+// and the latch holds (STANDARD.md, Reader Obligations, "Failure is terminal"
+// and "A refused primitive read must leave its destination unwritten").
 import serialize
 
 class smoke_object : serialize_object_base
@@ -183,7 +182,6 @@ def TestSmoke():
     // The number model helpers (DESIGN.md (c)).
     assert serialize_ult(1, -1)
     assert not serialize_ult(-1, 1)
-    assert serialize_ule(-1, -1)
     assert serialize_shr(0x8000000000000000, 63) == 1
     assert serialize_shr(-1, 0) == -1
     assert serialize_shr(-1, 64) == 0
@@ -195,9 +193,38 @@ def TestSmoke():
     assert serialize_shl(1, 63) == 0x8000000000000000
     assert serialize_shl(1, 64) == 0
 
-// expect-abort: serialize: serialize_object not implemented
-def TestStubAborts():
-    serialize_stub("serialize_object")
+// The unsigned 128-bit operations live once, in the int128 family, and the
+// stream scaffolding the port no longer uses is gone.
+def smoke_source(name:string) -> string:
+    let maybe = read_file(name)
+    return if maybe == nil: "" else: maybe
+
+def TestSharedHelpersAndUnusedCode():
+    let stream = smoke_source("serialize_stream.lobster")
+    assert length(stream) > 0
+    assert find_string(stream, "def serialize_stub(") < 0
+    assert find_string(stream, "def serialize_ule(") < 0
+    let fixed = smoke_source("serialize_fixed.lobster")
+    assert length(fixed) > 0
+    assert find_string(fixed, "def serialize_fixed_from_int64(") < 0
+    assert find_string(fixed, "def serialize_fixed_shl128(") < 0
+    assert find_string(fixed, "def serialize_fixed_sub128(") < 0
+    assert find_string(fixed, "def serialize_fixed_add128(") < 0
+    assert find_string(fixed, "def serialize_fixed_compare128(") < 0
+    assert find_string(fixed, "def serialize_fixed_bit_length128(") < 0
+    assert find_string(fixed, "def serialize_fixed_group32(") < 0
+    assert find_string(fixed, "def serialize_fixed_write_u128(") < 0
+    assert find_string(fixed, "def serialize_fixed_read_u128(") < 0
+    let int128 = smoke_source("serialize_int128.lobster")
+    assert length(int128) > 0
+    assert find_string(int128, "def serialize_u128_shl(") >= 0
+    assert find_string(int128, "def serialize_u128_sub(") >= 0
+    assert find_string(int128, "def serialize_u128_add(") >= 0
+    assert find_string(int128, "def serialize_u128_compare(") >= 0
+    assert find_string(int128, "def serialize_u128_bit_length(") >= 0
+    assert find_string(int128, "def serialize_u128_group32(") >= 0
+    assert find_string(int128, "def serialize_write_u128_bits(") >= 0
+    assert find_string(int128, "def serialize_read_u128_bits(") >= 0
 
 // expect-abort: serialize: write buffer bytes must be a multiple of 8
 def TestWriteBufferMustBeWords():

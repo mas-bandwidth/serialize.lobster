@@ -84,7 +84,7 @@ fuzz: fuzz-run
 	@rm -rf $(FUZZ_NORANGE) && cp -r $(FUZZ_STAGE) $(FUZZ_NORANGE)
 	@sed -i '/if offset > span:/,+1d' $(FUZZ_NORANGE)/serialize_int.lobster
 	@sed -i '/if serialize_ult(span, offset):/,+1d' $(FUZZ_NORANGE)/serialize_int.lobster
-	@sed -i '/if serialize_fixed_compare128(offset, span) > 0:/,+1d' $(FUZZ_NORANGE)/serialize_fixed.lobster
+	@sed -i '/if serialize_u128_compare(offset, span) > 0:/,+1d' $(FUZZ_NORANGE)/serialize_fixed.lobster
 	@sed -i '/if serialize_u128_compare(offset, span) > 0:/,+1d' $(FUZZ_NORANGE)/serialize_int128.lobster
 	@if $(FUZZ_HOST) --lobster $(LOBSTER) --driver $(FUZZ_NORANGE)/fuzz_driver.lobster --tmp $(FUZZ_WORK) \
 		>$(FUZZ_BUILD)/reader.log 2>&1; then \
@@ -120,8 +120,8 @@ fuzz: fuzz-run
 	fi
 	@echo "lobster-fraction negative control: the Lobster oracle ignores fraction_bits"
 	@rm -rf $(FUZZ_FRAC) && cp -r $(FUZZ_STAGE) $(FUZZ_FRAC)
-	@sed -i 's/return serialize_fixed_shl128(serialize_fixed_from_int64(whole), fraction_bits)/return serialize_fixed_shl128(serialize_fixed_from_int64(whole), 0)/' $(FUZZ_FRAC)/serialize_fixed.lobster
-	@grep -q 'serialize_fixed_from_int64(whole), 0' $(FUZZ_FRAC)/serialize_fixed.lobster || \
+	@sed -i 's/serialize_u128_shl(serialize_u128_from_int64(whole), fraction_bits)/serialize_u128_shl(serialize_u128_from_int64(whole), 0)/' $(FUZZ_FRAC)/serialize_fixed.lobster
+	@grep -q 'serialize_u128_from_int64(whole), 0' $(FUZZ_FRAC)/serialize_fixed.lobster || \
 		{ echo "lobster-fraction negative control: the sabotage needle no longer matches"; exit 1; }
 	@if $(FUZZ_HOST) --lobster $(LOBSTER) --driver $(FUZZ_FRAC)/fuzz_driver.lobster --tmp $(FUZZ_WORK) \
 		>$(FUZZ_BUILD)/lobster-fraction.log 2>&1; then \
@@ -145,8 +145,8 @@ fuzz: fuzz-run
 	fi
 	@echo "lobster-high-group negative control: the Lobster oracle corrupts group 2 of a wide fixed128 field"
 	@rm -rf $(FUZZ_HIGHGRP) && cp -r $(FUZZ_STAGE) $(FUZZ_HIGHGRP)
-	@sed -i 's/case 2: return v.hi & 0xFFFFFFFF/case 2: return (v.hi ^ 1) \& 0xFFFFFFFF/' $(FUZZ_HIGHGRP)/serialize_fixed.lobster
-	@grep -q 'case 2: return (v.hi ^ 1) & 0xFFFFFFFF' $(FUZZ_HIGHGRP)/serialize_fixed.lobster || \
+	@sed -i 's/return v.hi & 0xFFFFFFFF/return (v.hi ^ 1) \& 0xFFFFFFFF/' $(FUZZ_HIGHGRP)/serialize_int128.lobster
+	@grep -q 'return (v.hi ^ 1) & 0xFFFFFFFF' $(FUZZ_HIGHGRP)/serialize_int128.lobster || \
 		{ echo "lobster-high-group negative control: the sabotage needle no longer matches"; exit 1; }
 	@if $(FUZZ_HOST) --lobster $(LOBSTER) --driver $(FUZZ_HIGHGRP)/fuzz_driver.lobster --tmp $(FUZZ_WORK) \
 		>$(FUZZ_BUILD)/lobster-high-group.log 2>&1; then \

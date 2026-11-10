@@ -55,109 +55,26 @@ def serialize_fixed_validate(integer_bits:int, fraction_bits:int, min:int, max:i
         serialize_abort(serialize_fixed_messages[code])
 
 // ---------------------------------------------------------------------------
-// the unsigned 128-bit pair (DESIGN.md (c); serialize.c's serialize_u128_*)
+// the unsigned 128-bit pair: the operations themselves live in the int128
+// family (DESIGN.md (c); serialize.c's serialize_u128_*). The raw bounds are
+// unsigned pairs held in the int128 lanes.
 // ---------------------------------------------------------------------------
-
-def serialize_fixed_from_int64(value:int) -> serialize_int128:
-    return serialize_int128 { lo: value, hi: if value < 0: -1 else: 0 }
-
-// Logical left shift of an unsigned pair, n in [0,128], wrapping.
-def serialize_fixed_shl128(u:serialize_int128, n:int) -> serialize_int128:
-    if n <= 0:
-        return u
-    if n < 64:
-        return serialize_int128 {
-            lo: serialize_shl(u.lo, n),
-            hi: serialize_shl(u.hi, n) | serialize_shr(u.lo, 64 - n)
-        }
-    if n < 128:
-        return serialize_int128 { lo: 0, hi: serialize_shl(u.lo, n - 64) }
-    return serialize_int128 { lo: 0, hi: 0 }
-
-// a - b in the unsigned 128-bit domain, wrapping.
-def serialize_fixed_sub128(a:serialize_int128, b:serialize_int128) -> serialize_int128:
-    let lo = a.lo - b.lo
-    let borrow = if serialize_ult(a.lo, b.lo): 1 else: 0
-    return serialize_int128 { lo: lo, hi: a.hi - b.hi - borrow }
-
-// a + b in the unsigned 128-bit domain, wrapping.
-def serialize_fixed_add128(a:serialize_int128, b:serialize_int128) -> serialize_int128:
-    let lo = a.lo + b.lo
-    let carry = if serialize_ult(lo, a.lo): 1 else: 0
-    return serialize_int128 { lo: lo, hi: a.hi + b.hi + carry }
-
-// Unsigned comparison of two 128-bit pairs, -1, 0 or 1.
-def serialize_fixed_compare128(a:serialize_int128, b:serialize_int128) -> int:
-    if a.hi != b.hi:
-        return if serialize_ult(a.hi, b.hi): -1 else: 1
-    if a.lo != b.lo:
-        return if serialize_ult(a.lo, b.lo): -1 else: 1
-    return 0
-
-// Bit length of an unsigned 128-bit pair; 0 for 0.
-def serialize_fixed_bit_length128(v:serialize_int128) -> int:
-    if v.hi != 0:
-        return 64 + serialize_bit_length64(v.hi)
-    return serialize_bit_length64(v.lo)
 
 // raw_bound: min/max are WHOLE units, the raw bound is whole << fraction_bits
 // (STANDARD.md, fixed; serialize.c serialize_raw_bound).
 def serialize_fixed_raw_bound(whole:int, fraction_bits:int) -> serialize_int128:
-    return serialize_fixed_shl128(serialize_fixed_from_int64(whole), fraction_bits)
-
-// The 32-bit group at index i, counting from least significant (STANDARD.md,
-// fixed: the same splitting rule as serialize_bits).
-def serialize_fixed_group32(v:serialize_int128, i:int) -> int:
-    switch i:
-        case 0: return v.lo & 0xFFFFFFFF
-        case 1: return serialize_shr(v.lo, 32)
-        case 2: return v.hi & 0xFFFFFFFF
-        default: return serialize_shr(v.hi, 32)
-
-// Writes `bits` bits of an unsigned 128-bit value as 32-bit groups from least
-// significant upward; the caller has already gated the whole width.
-def serialize_fixed_write_u128(s:serialize_write_stream, value:serialize_int128, bits:int):
-    var written = 0
-    var group = 0
-    while written < bits:
-        var chunk = bits - written
-        if chunk > 32:
-            chunk = 32
-        s.pack_bits(serialize_fixed_group32(value, group), chunk)
-        written += chunk
-        group += 1
-
-// Reads `bits` bits into an unsigned 128-bit value; the caller has already
-// gated the whole width and no byte outside the data is loaded.
-def serialize_fixed_read_u128(s:serialize_read_stream, bits:int) -> serialize_int128:
-    var lo = 0
-    var hi = 0
-    var read = 0
-    var group = 0
-    while read < bits:
-        var chunk = bits - read
-        if chunk > 32:
-            chunk = 32
-        let g = s.unpack_bits(chunk)
-        switch group:
-            case 0: lo = lo | g
-            case 1: lo = lo | serialize_shl(g, 32)
-            case 2: hi = hi | g
-            default: hi = hi | serialize_shl(g, 32)
-        read += chunk
-        group += 1
-    return serialize_int128 { lo: lo, hi: hi }
+    return serialize_u128_to_int128(serialize_u128_shl(serialize_u128_from_int64(whole), fraction_bits))
 
 // The range check a write and a measure make (IMPLEMENTING.md U6, U9): a raw
 // value outside [raw_min, raw_max] traps. Returns the field's width.
 def serialize_fixed_check(raw:serialize_int128, fraction_bits:int, min:int, max:int) -> int:
     let raw_min = serialize_fixed_raw_bound(min, fraction_bits)
     let raw_max = serialize_fixed_raw_bound(max, fraction_bits)
-    let span = serialize_fixed_sub128(raw_max, raw_min)
-    let offset = serialize_fixed_sub128(raw, raw_min)
-    if serialize_fixed_compare128(span, offset) < 0:
+    let span = serialize_u128_sub(serialize_int128_to_u128(raw_max), serialize_int128_to_u128(raw_min))
+    let offset = serialize_u128_sub(serialize_int128_to_u128(raw), serialize_int128_to_u128(raw_min))
+    if serialize_u128_compare(span, offset) < 0:
         serialize_abort("serialize: value must be in [min, max]")
-    return serialize_fixed_bit_length128(span)
+    return serialize_u128_bit_length(span)
 
 // The write core: an offset encoding over the raw bounds (STANDARD.md, fixed;
 // serialize.c serialize_write_fixed_core). A value outside the raw span
@@ -167,10 +84,9 @@ def serialize_fixed_write_core(s:serialize_write_stream, raw:serialize_int128, f
     if bits == 0:
         return true
     let raw_min = serialize_fixed_raw_bound(min, fraction_bits)
-    let offset = serialize_fixed_sub128(raw, raw_min)
-    if not s.write_gate(bits):
-        return false
-    serialize_fixed_write_u128(s, offset, bits)
+    let offset = serialize_u128_sub(serialize_int128_to_u128(raw), serialize_int128_to_u128(raw_min))
+    s.write_gate(bits)
+    serialize_write_u128_bits(s, offset, bits)
     return true
 
 // The read core: check the decoded offset against the raw span, reject never
@@ -179,8 +95,8 @@ def serialize_fixed_write_core(s:serialize_write_stream, raw:serialize_int128, f
 def serialize_fixed_read_core(s:serialize_read_stream, fraction_bits:int, min:int, max:int) -> serialize_int128, bool:
     let raw_min = serialize_fixed_raw_bound(min, fraction_bits)
     let raw_max = serialize_fixed_raw_bound(max, fraction_bits)
-    let span = serialize_fixed_sub128(raw_max, raw_min)
-    let bits = serialize_fixed_bit_length128(span)
+    let span = serialize_u128_sub(serialize_int128_to_u128(raw_max), serialize_int128_to_u128(raw_min))
+    let bits = serialize_u128_bit_length(span)
     // A degenerate field reads no bits and still consults the failure state:
     // on a failed stream it is refused too (STANDARD.md, Reader Obligations,
     // "Failure is terminal").
@@ -188,10 +104,10 @@ def serialize_fixed_read_core(s:serialize_read_stream, fraction_bits:int, min:in
         return raw_min, not s.failed
     if not s.read_gate(bits):
         return raw_min, false
-    let offset = serialize_fixed_read_u128(s, bits)
-    if serialize_fixed_compare128(offset, span) > 0:
+    let offset = serialize_read_u128_bits(s, bits)
+    if serialize_u128_compare(offset, span) > 0:
         return raw_min, s.fail(serialize_refusal_value_out_of_range)
-    return serialize_fixed_add128(raw_min, offset), true
+    return serialize_u128_to_int128(serialize_u128_add(serialize_int128_to_u128(raw_min), offset)), true
 
 // ---------------------------------------------------------------------------
 // fixed32: storage 8, 16 or 32 bits, over the int32 raw value
@@ -199,7 +115,7 @@ def serialize_fixed_read_core(s:serialize_read_stream, fraction_bits:int, min:in
 
 def serialize_fixed32(s:serialize_write_stream, value:int, integer_bits:int, fraction_bits:int, min:int, max:int):
     serialize_fixed_validate(integer_bits, fraction_bits, min, max, 8, 32)
-    return value, serialize_fixed_write_core(s, serialize_fixed_from_int64(value), fraction_bits, min, max)
+    return value, serialize_fixed_write_core(s, serialize_int128_from_int64(value), fraction_bits, min, max)
 
 def serialize_fixed32(s:serialize_read_stream, value:int, integer_bits:int, fraction_bits:int, min:int, max:int):
     if serialize_fixed_declaration(integer_bits, fraction_bits, min, max, 8, 32) != 0:
@@ -212,7 +128,7 @@ def serialize_fixed32(s:serialize_read_stream, value:int, integer_bits:int, frac
 
 def serialize_fixed32(s:serialize_measure_stream, value:int, integer_bits:int, fraction_bits:int, min:int, max:int):
     serialize_fixed_validate(integer_bits, fraction_bits, min, max, 8, 32)
-    s.measure_bits(serialize_fixed_check(serialize_fixed_from_int64(value), fraction_bits, min, max))
+    s.measure_bits(serialize_fixed_check(serialize_int128_from_int64(value), fraction_bits, min, max))
     return value, true
 
 // ---------------------------------------------------------------------------
@@ -221,7 +137,7 @@ def serialize_fixed32(s:serialize_measure_stream, value:int, integer_bits:int, f
 
 def serialize_fixed64(s:serialize_write_stream, value:int, integer_bits:int, fraction_bits:int, min:int, max:int):
     serialize_fixed_validate(integer_bits, fraction_bits, min, max, 8, 64)
-    return value, serialize_fixed_write_core(s, serialize_fixed_from_int64(value), fraction_bits, min, max)
+    return value, serialize_fixed_write_core(s, serialize_int128_from_int64(value), fraction_bits, min, max)
 
 def serialize_fixed64(s:serialize_read_stream, value:int, integer_bits:int, fraction_bits:int, min:int, max:int):
     if serialize_fixed_declaration(integer_bits, fraction_bits, min, max, 8, 64) != 0:
@@ -233,7 +149,7 @@ def serialize_fixed64(s:serialize_read_stream, value:int, integer_bits:int, frac
 
 def serialize_fixed64(s:serialize_measure_stream, value:int, integer_bits:int, fraction_bits:int, min:int, max:int):
     serialize_fixed_validate(integer_bits, fraction_bits, min, max, 8, 64)
-    s.measure_bits(serialize_fixed_check(serialize_fixed_from_int64(value), fraction_bits, min, max))
+    s.measure_bits(serialize_fixed_check(serialize_int128_from_int64(value), fraction_bits, min, max))
     return value, true
 
 // ---------------------------------------------------------------------------
