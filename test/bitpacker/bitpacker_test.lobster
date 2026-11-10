@@ -289,10 +289,10 @@ def test_pack_and_unpack_bytes():
             trail, ok = r.serialize_bits(trail, 19)
             assert ok and trail == 0x12345
 
-// The byte primitives pass the same gates as every other operation: a full
-// buffer latches at the whole width before a byte moves, a read past the end
-// is refused before any load, and a zero-count call still consults the latch
-// (DESIGN.md (e); STANDARD.md, Reader Obligations, "Failure is terminal").
+// The byte primitives pass the same gates as every other operation: a write
+// past the end traps at the whole width before a byte moves, a read past the
+// end is refused before any load, and a zero-count read still consults the
+// latch (DESIGN.md (e); STANDARD.md, Reader Obligations, "Failure is terminal").
 def test_bytes_gates():
     let payload = ensure_size("", 16, 0)
     for(16) i:
@@ -361,12 +361,17 @@ def test_bits_required():
     assert serialize_bits_required(-5, 5) == 4
     assert serialize_bits_required(0, 0xFFFFFFFF) == 32
     assert serialize_bits_required(-2147483648, 2147483647) == 32
+    assert serialize_bits_required(0, 4294967296) == 33
+    assert serialize_bits_required(0, 4294967301) == 33
+    assert serialize_bits_required(7, 6) == 64
 
     assert serialize_bits_required64(0, 0) == 0
     assert serialize_bits_required64(-1, -1) == 0
     assert serialize_bits_required64(0, 1) == 1
     assert serialize_bits_required64(0, 0xFFFFFFFF) == 32
     assert serialize_bits_required64(0, 0x100000000) == 33
+    assert serialize_bits_required64(0, 4294967301) == 33
+    assert serialize_bits_required64(7, 6) == 64
     assert serialize_bits_required64(0, 0x7FFFFFFFFFFFFFFF) == 63
     assert serialize_bits_required64(0, 0x8000000000000000) == 64
     assert serialize_bits_required64(0, -1) == 64
@@ -620,6 +625,10 @@ def TestBitpacker():
     test_bytes_gates()
     test_bits_required()
     test_read_latch_over_valid_data()
+
+// The entry exports the vendored serialize standard's release version.
+def TestSerializeVersion():
+    assert serialize_version == "2.1.3"
 
 // expect-abort: serialize: bits must be in [1,32]
 def TestBitpackerBitsZeroAborts():
