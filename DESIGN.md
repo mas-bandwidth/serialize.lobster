@@ -303,9 +303,9 @@ hetzner2 measurements agree):
 - **Wrapping.** Lobster's `+`, `-` and `*` on `int` wrap two's-complement and
   never trap, so offsets such as `value - min` are taken in that arithmetic and
   then read unsigned. This is STANDARD.md's "uses wrapping operations on the
-  read path". The `--cpp` build keeps the same semantics: the Makefile's
-  `CPP_CMAKE_ARGS` passes `-fwrapv` with `-O2`, and `make test-cpp` runs the
-  int64 full-range round-trips and 128-bit carry checks through that backend.
+  read path". The `--cpp` backend keeps it with no flag of ours: its emitter
+  writes int `+`, `-`, `*`, negation and `<<` on `uint64_t` and converts
+  back, and the pin's own CMake build compiles with `-fwrapv`.
 - **128 bits.** Lobster has no 128-bit integer, so a 128-bit value is two int
   lanes, `{ lo, hi }`. This is serialize.c's own emulation (`serialize_u128_*`)
   and is the same wire.
@@ -677,11 +677,6 @@ name test/smoke/smoke_test.lobster.
   - an empty one (`FAIL test/<name>/ is empty (no *_test.lobster)`)
   - a test file that declares no test
   - an empty `src/`
-- **The --cpp test leg.** `make test-cpp` runs `TestSerializeInt` through
-  the `--cpp` backend (the `lobster-cpp` toolchain, clang -O2 with
-  `-fwrapv`): it stages `src/` and `test/int/` as the runner does, compiles
-  the driver to C++, rebuilds `compiled_lobster`, and requires the done
-  line from the compiled program.
 - **A test.** Each `def Test<Name>():` at the start of a line in a
   `*_test.lobster` file is one test, and runs in its own process under the
   JIT, `$LOBSTER <driver>.lobster`. The process runs in `build/run/<name>/`,
