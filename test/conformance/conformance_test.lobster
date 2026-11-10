@@ -132,15 +132,18 @@ def conf_check(cond:bool, message:string) -> bool:
 // parsing (STANDARD.md, "The vector format": lexical rules)
 // ---------------------------------------------------------------------------
 
-def conf_digit(ch:int) -> int:
+def conf_digit(ch:int, base:int) -> int:
+    var digit = base
     if ch >= 48 and ch <= 57:
-        return ch - 48
-    if ch >= 97 and ch <= 102:
-        return ch - 87
-    if ch >= 65 and ch <= 70:
-        return ch - 55
-    conf_lex_error = "non-digit in vector token"
-    return 0
+        digit = ch - 48
+    elif ch >= 97 and ch <= 102:
+        digit = ch - 87
+    elif ch >= 65 and ch <= 70:
+        digit = ch - 55
+    if digit >= base:
+        conf_lex_error = "non-digit in vector token"
+        return 0
+    return digit
 
 def conf_u128_shl(a:serialize_uint128, n:int) -> serialize_uint128:
     if n == 0:
@@ -166,13 +169,15 @@ def conf_parse_u128(text:string) -> serialize_uint128:
     if length(body) >= 2 and (substring(body, 0, 2) == "0x" or substring(body, 0, 2) == "0X"):
         base = 16
         body = substring(body, 2, -1)
+    if length(body) == 0:
+        conf_lex_error = "no digits in vector token"
     var acc = serialize_uint128_make(0, 0)
     for(body) ch:
         if base == 16:
             acc = conf_u128_shl(acc, 4)
         else:
             acc = conf_u128_mul10(acc)
-        acc = serialize_u128_add(acc, serialize_uint128_make(0, conf_digit(ch)))
+        acc = serialize_u128_add(acc, serialize_uint128_make(0, conf_digit(ch, base)))
     if negative:
         acc = serialize_u128_sub(serialize_uint128_make(0, 0), acc)
     return acc
@@ -1250,3 +1255,45 @@ def TestRejectNonDigitInExpectValue():
     conf_soft = false
     if not conf_check(not accepted, "non-digit in an expect value was accepted"):
         return
+
+// A hexadecimal digit inside a decimal expect value must reject the record.
+// Reading it as a digit would accept a different vector.
+def TestRejectHexDigitInDecimalExpectValue():
+    let text = "operation fixed\n" +
+        "name reject-hex-digit-in-decimal-expect-value\n" +
+        "param integer_bits = 8\n" +
+        "param fraction_bits = 8\n" +
+        "param min = -100\n" +
+        "param max = 100\n" +
+        "bytes C0 60\n" +
+        "expect value = -82C\n" +
+        "consumed 16\n" +
+        "writer canonical\n"
+    let records, _ops = conf_parse_records(text)
+    if not conf_check(length(records) == 1, "hex digit in decimal expect value did not parse to one record"):
+        return
+    conf_soft = true
+    let accepted = conf_run_record(records[0], "reject-hex-digit-in-decimal-expect-value")
+    conf_soft = false
+    if not conf_check(not accepted, "hex digit in a decimal expect value was accepted"):
+        return
+
+// An expect value with no digits must reject the record. Reading it as 0
+// would accept a different vector.
+def TestRejectExpectValueWithNoDigits():
+    for(["0x", "-"]) token:
+        let text = "operation bits\n" +
+            "name reject-expect-value-with-no-digits\n" +
+            "param bits = 8\n" +
+            "bytes 00\n" +
+            "expect value = " + token + "\n" +
+            "consumed 8\n" +
+            "writer canonical\n"
+        let records, _ops = conf_parse_records(text)
+        if not conf_check(length(records) == 1, "expect value " + token + " did not parse to one record"):
+            return
+        conf_soft = true
+        let accepted = conf_run_record(records[0], "reject-expect-value-with-no-digits")
+        conf_soft = false
+        if not conf_check(not accepted, "expect value " + token + " with no digits was accepted"):
+            return

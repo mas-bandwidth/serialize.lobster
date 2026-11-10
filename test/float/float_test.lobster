@@ -63,6 +63,13 @@ def serialize_float_test_hex(text:string) -> int:
         value = (value << 4) | digit
     return value
 
+// A decimal integer token; anything else fails the test.
+def serialize_float_test_int(text:string) -> int:
+    let value, ok = string_to_int(text)
+    if not ok:
+        serialize_float_test_fail("not an integer: " + text)
+    return value
+
 // The unsigned 128-bit pair helpers the 128-bit expectations need (DESIGN.md
 // (c)); the same two lanes the fixed128 value uses.
 def serialize_float_test_u128_add(a:serialize_int128, b:serialize_int128) -> serialize_int128:
@@ -307,7 +314,7 @@ def serialize_float_test_run_fixed(record:serialize_float_record, label:string):
             return
         serialize_float_test_check(ok, label + ": accepted read refused")
         serialize_float_test_check(s.bits_processed() == record.consumed, label + ": consumed bits")
-        let want = string_to_int(record.value_text)
+        let want = serialize_float_test_int(record.value_text)
         serialize_float_test_check(value == want, label + ": value")
         if record.writer:
             let w = serialize_float_test_write(record.consumed)
@@ -334,7 +341,7 @@ def serialize_float_test_run_fixed(record:serialize_float_record, label:string):
             return
         serialize_float_test_check(ok, label + ": accepted read refused")
         serialize_float_test_check(s.bits_processed() == record.consumed, label + ": consumed bits")
-        let want = string_to_int(record.value_text)
+        let want = serialize_float_test_int(record.value_text)
         serialize_float_test_check(value == want, label + ": value")
         if record.writer:
             let w = serialize_float_test_write(record.consumed)
@@ -441,7 +448,7 @@ def serialize_float_test_run_sequence(record:serialize_float_record, label:strin
             serialize_float_test_check(record.values[i] == (if b: "true" else: "false"), label + ": step " + string(i))
         elif words[0] == "bits" and length(words) == 2:
             var v = 0
-            v, ok = r.serialize_bits(v, string_to_int(words[1]))
+            v, ok = r.serialize_bits(v, serialize_float_test_int(words[1]))
             got.push(v)
             serialize_float_test_check(v == serialize_float_test_hex(record.values[i]), label + ": step " + string(i))
         elif words[0] == "float":
@@ -464,7 +471,7 @@ def serialize_float_test_run_sequence(record:serialize_float_record, label:strin
                 b, ok = w.serialize_bool(b)
             elif words[0] == "bits":
                 var v = got[i]
-                v, ok = w.serialize_bits(v, string_to_int(words[1]))
+                v, ok = w.serialize_bits(v, serialize_float_test_int(words[1]))
             else:
                 var f = serialize_float32_from_bits(got[i])
                 f, ok = w.serialize_float(f)
@@ -666,6 +673,24 @@ def TestRejectNonDigitInVectorToken():
 def TestRejectUnknownRecordKey():
     let records = serialize_float_test_parse("operation float\nname n\nnot_a_key 1\n")
     print "records " + string(length(records))
+
+// An expect value that is not an integer must fail a fixed32 record.
+// expect-abort: TestSerializeFloat: not an integer: -832x
+def TestRejectNonIntegerFixed32ExpectValue():
+    let records = serialize_float_test_parse("operation fixed\nname n\nparam integer_bits = 8\nparam fraction_bits = 8\nparam min = -100\nparam max = 100\nbytes C0 60\nexpect value = -832x\nconsumed 16\nwriter canonical\n")
+    serialize_float_test_run_fixed(records[0], "fixed32 control")
+
+// An expect value that is not an integer must fail a fixed64 record.
+// expect-abort: TestSerializeFloat: not an integer: 4294967296x
+def TestRejectNonIntegerFixed64ExpectValue():
+    let records = serialize_float_test_parse("operation fixed\nname n\nparam integer_bits = 48\nparam fraction_bits = 16\nparam min = 0\nparam max = 131072\nbytes 00 00 00 00 01\nexpect value = 4294967296x\nconsumed 34\nwriter canonical\n")
+    serialize_float_test_run_fixed(records[0], "fixed64 control")
+
+// A bits step width that is not an integer must fail a sequence record.
+// expect-abort: TestSerializeFloat: not an integer: 32x
+def TestRejectNonIntegerBitsStepWidth():
+    let records = serialize_float_test_parse("operation sequence\nname n\nparam step = bits 32x\nparam step = float\nparam step = bits 32\nbytes 00 00 A0 7F 00 00 80 3F 01 00 80 FF\nexpect value = 0x7FA00000 | 0x3F800000 | 0xFF800001\nconsumed 96\nwriter canonical\n")
+    serialize_float_test_run_sequence(records[0], "bits width control")
 
 // ---------------------------------------------------------------------------
 // API misuse aborts (DESIGN.md (e), ABORT CASES): min >= max and res <= 0 on
