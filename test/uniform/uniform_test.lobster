@@ -281,7 +281,7 @@ def TestU15CopyString():
     assert serialize_copy_string("ab\x00cd", 16) == "ab"
     assert serialize_copy_string("hello", 1) == ""
 
-// Audit 2026-10-27 (L, audit/cf_precomputed_wide.lobster), U16: precomputed
+// U16: precomputed
 // max_integer_value must lie in [1, 4294967040]. bits_required works in the
 // uint32 domain, so 2^40 passed with 0 bits and 2^32 + 5 with 3, and the
 // read accepted wrong data. A read refuses them now; the top of the range is
