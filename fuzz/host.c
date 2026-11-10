@@ -431,15 +431,19 @@ static void gen_op(Op *o) {
         break;
     }
     case OP_CFLOAT: {
-        if (rnd(2) == 0) { o->f1 = -2.0f; o->f2 = 2.0f; o->f3 = 0.01f; }
-        else { o->f1 = 0.0f; o->f2 = 100.0f; o->f3 = 0.5f; }
+        uint32_t declaration = rnd(3);
+        if (declaration == 0) { o->f1 = -2.0f; o->f2 = 2.0f; o->f3 = 0.01f; }
+        else if (declaration == 1) { o->f1 = 0.0f; o->f2 = 100.0f; o->f3 = 0.5f; }
+        else { o->f1 = 0.0f; o->f2 = 100000000.0f; o->f3 = 1.0f; }
         o->f4 = o->f1 + (o->f2 - o->f1) * ((float)rnd(10000) / 10000.0f);
         break;
     }
     case OP_CFLOAT_PRE: {
         uint32_t mi; int bits; float delta;
-        if (rnd(2) == 0) { o->f1 = -2.0f; o->f2 = 2.0f; o->f3 = 0.01f; }
-        else { o->f1 = 0.0f; o->f2 = 100.0f; o->f3 = 0.5f; }
+        uint32_t declaration = rnd(3);
+        if (declaration == 0) { o->f1 = -2.0f; o->f2 = 2.0f; o->f3 = 0.01f; }
+        else if (declaration == 1) { o->f1 = 0.0f; o->f2 = 100.0f; o->f3 = 0.5f; }
+        else { o->f1 = 0.0f; o->f2 = 100000000.0f; o->f3 = 1.0f; }
         serialize_compressed_float_params(o->f1, o->f2, o->f3, &mi, &bits, &delta);
         o->cmax = mi; o->cbits = bits; o->cdelta = delta;
         o->f4 = o->f1 + (o->f2 - o->f1) * ((float)rnd(10000) / 10000.0f);

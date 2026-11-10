@@ -22,6 +22,7 @@
 import serialize
 
 var conf_soft = false
+var conf_lex_error = ""
 
 class cval:
     kind:int = 0     // 0 text, 1 int, 2 128-bit, 3 float bits, -1 unknown
@@ -131,14 +132,18 @@ def conf_check(cond:bool, message:string) -> bool:
 // parsing (STANDARD.md, "The vector format": lexical rules)
 // ---------------------------------------------------------------------------
 
-def conf_digit(ch:int) -> int:
+def conf_digit(ch:int, base:int) -> int:
+    var digit = base
     if ch >= 48 and ch <= 57:
-        return ch - 48
-    if ch >= 97 and ch <= 102:
-        return ch - 87
-    if ch >= 65 and ch <= 70:
-        return ch - 55
-    return 0
+        digit = ch - 48
+    elif ch >= 97 and ch <= 102:
+        digit = ch - 87
+    elif ch >= 65 and ch <= 70:
+        digit = ch - 55
+    if digit >= base:
+        conf_lex_error = "non-digit in vector token"
+        return 0
+    return digit
 
 def conf_u128_shl(a:serialize_uint128, n:int) -> serialize_uint128:
     if n == 0:
@@ -164,13 +169,15 @@ def conf_parse_u128(text:string) -> serialize_uint128:
     if length(body) >= 2 and (substring(body, 0, 2) == "0x" or substring(body, 0, 2) == "0X"):
         base = 16
         body = substring(body, 2, -1)
+    if length(body) == 0:
+        conf_lex_error = "no digits in vector token"
     var acc = serialize_uint128_make(0, 0)
     for(body) ch:
         if base == 16:
             acc = conf_u128_shl(acc, 4)
         else:
             acc = conf_u128_mul10(acc)
-        acc = serialize_u128_add(acc, serialize_uint128_make(0, conf_digit(ch)))
+        acc = serialize_u128_add(acc, serialize_uint128_make(0, conf_digit(ch, base)))
     if negative:
         acc = serialize_u128_sub(serialize_uint128_make(0, 0), acc)
     return acc
@@ -192,6 +199,7 @@ def conf_parse_int(text:string) -> int:
 def conf_parse_float(text:string) -> float:
     let v, ok = string_to_float(text)
     if not ok:
+        conf_lex_error = "float token did not parse"
         return 0.0
     return v
 
@@ -286,11 +294,15 @@ def conf_parse_records(text:string) -> [conf_rec], int:
             continue
         if length(line) >= 10 and substring(line, 0, 10) == "operation ":
             if have:
+                if conf_lex_error != "" and current.malformed == "":
+                    current.malformed = conf_lex_error
+                conf_lex_error = ""
                 records.push(current)
             operations += 1
             current = conf_rec {}
             current.op = substring(line, 10, -1)
             have = true
+            conf_lex_error = ""
         elif not have:
             continue
         elif length(line) >= 5 and substring(line, 0, 5) == "name ":
@@ -362,6 +374,9 @@ def conf_parse_records(text:string) -> [conf_rec], int:
             // never skipped.
             current.malformed = "unknown key: " + line
     if have:
+        if conf_lex_error != "" and current.malformed == "":
+            current.malformed = conf_lex_error
+        conf_lex_error = ""
         records.push(current)
     return records, operations
 
@@ -923,7 +938,12 @@ def conf_object_refusal_checks(rec:conf_rec, steps:[string], r:serialize_read_st
 def conf_run_record(rec:conf_rec, what:string) -> bool:
     if rec.malformed != "":
         return conf_check(false, what + ": malformed vector: " + rec.malformed)
+    conf_lex_error = ""
     let steps = conf_steps(rec)
+    if conf_lex_error != "":
+        let why = conf_lex_error
+        conf_lex_error = ""
+        return conf_check(false, what + ": " + why)
     if length(steps) == 0:
         return conf_check(false, what + ": unknown operation " + rec.op)
     if rec.has_writer_input and not conf_run_writer_input(rec, steps, what):
@@ -933,6 +953,10 @@ def conf_run_record(rec:conf_rec, what:string) -> bool:
     for(steps) step:
         st.vals.push(conf_sentinel(step))
     conf_read_steps(r, steps, 0, length(steps), st)
+    if conf_lex_error != "":
+        let why = conf_lex_error
+        conf_lex_error = ""
+        return conf_check(false, what + ": " + why)
     if st.error != "":
         return conf_check(false, what + ": " + st.error)
     let vals = st.vals
@@ -1012,6 +1036,10 @@ def conf_run_record(rec:conf_rec, what:string) -> bool:
                 return conf_check(false, what + ": measure refused at step " + string(i))
         if m.bits_processed() < rec.measure_at_least:
             return conf_check(false, what + ": measure " + string(m.bits_processed()) + " < floor " + string(rec.measure_at_least))
+    if conf_lex_error != "":
+        let why = conf_lex_error
+        conf_lex_error = ""
+        return conf_check(false, what + ": " + why)
     return true
 
 def conf_trim(s:string) -> string:
@@ -1188,3 +1216,84 @@ def TestConformanceCorpus():
     if not conf_check(ub == 1 and length(ufailed) == 1, "control: unknown operation was not rejected"):
         return
     print "control: conformance-controls/unknown-operation.txt rejected as required"
+
+// A byte token that is not hexadecimal must fail the record. A non-digit
+// read as zero would accept a different vector.
+def TestRejectNonDigitInVectorToken():
+    let text = "operation bits\n" +
+        "name reject-non-digit-in-vector-token\n" +
+        "param bits = 1\n" +
+        "bytes 0G\n" +
+        "expect value = 0\n" +
+        "consumed 1\n" +
+        "writer canonical\n"
+    let records, _ops = conf_parse_records(text)
+    if not conf_check(length(records) == 1, "non-digit vector token did not parse to one record"):
+        return
+    let parsed = if length(records[0].bytes) == 1: records[0].bytes[0] else: -1
+    conf_soft = true
+    let accepted = conf_run_record(records[0], "reject-non-digit-in-vector-token")
+    conf_soft = false
+    if not conf_check(not accepted, "non-digit in a vector token parsed as " + string(parsed)):
+        return
+
+// A non-digit in an expect value must reject the record. Coercing the token
+// to 0 would accept a different vector.
+def TestRejectNonDigitInExpectValue():
+    let text = "operation bits\n" +
+        "name reject-non-digit-in-expect-value\n" +
+        "param bits = 1\n" +
+        "bytes 00\n" +
+        "expect value = 0G\n" +
+        "consumed 1\n" +
+        "writer canonical\n"
+    let records, _ops = conf_parse_records(text)
+    if not conf_check(length(records) == 1, "non-digit expect value did not parse to one record"):
+        return
+    conf_soft = true
+    let accepted = conf_run_record(records[0], "reject-non-digit-in-expect-value")
+    conf_soft = false
+    if not conf_check(not accepted, "non-digit in an expect value was accepted"):
+        return
+
+// A hexadecimal digit inside a decimal expect value must reject the record.
+// Reading it as a digit would accept a different vector.
+def TestRejectHexDigitInDecimalExpectValue():
+    let text = "operation fixed\n" +
+        "name reject-hex-digit-in-decimal-expect-value\n" +
+        "param integer_bits = 8\n" +
+        "param fraction_bits = 8\n" +
+        "param min = -100\n" +
+        "param max = 100\n" +
+        "bytes C0 60\n" +
+        "expect value = -82C\n" +
+        "consumed 16\n" +
+        "writer canonical\n"
+    let records, _ops = conf_parse_records(text)
+    if not conf_check(length(records) == 1, "hex digit in decimal expect value did not parse to one record"):
+        return
+    conf_soft = true
+    let accepted = conf_run_record(records[0], "reject-hex-digit-in-decimal-expect-value")
+    conf_soft = false
+    if not conf_check(not accepted, "hex digit in a decimal expect value was accepted"):
+        return
+
+// An expect value with no digits must reject the record. Reading it as 0
+// would accept a different vector.
+def TestRejectExpectValueWithNoDigits():
+    for(["0x", "-"]) token:
+        let text = "operation bits\n" +
+            "name reject-expect-value-with-no-digits\n" +
+            "param bits = 8\n" +
+            "bytes 00\n" +
+            "expect value = " + token + "\n" +
+            "consumed 8\n" +
+            "writer canonical\n"
+        let records, _ops = conf_parse_records(text)
+        if not conf_check(length(records) == 1, "expect value " + token + " did not parse to one record"):
+            return
+        conf_soft = true
+        let accepted = conf_run_record(records[0], "reject-expect-value-with-no-digits")
+        conf_soft = false
+        if not conf_check(not accepted, "expect value " + token + " with no digits was accepted"):
+            return

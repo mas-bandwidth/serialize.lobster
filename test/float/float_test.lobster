@@ -29,6 +29,8 @@ class serialize_float_record:
     value_text:string
     consumed:int
     writer:bool
+    writer_input:bool
+    writer_bits:int
     steps:[string]
     values:[string]
 
@@ -46,7 +48,7 @@ def serialize_float_test_new_record(op:string) -> serialize_float_record:
     return serialize_float_record {
         op: op, name: "", param_names: [], param_values: [], bytes: [],
         refused: false, reason: "", expect_bits: false, bits: 0, expect_value: false,
-        value_text: "", consumed: -1, writer: false, steps: [], values: []
+        value_text: "", consumed: -1, writer: false, writer_input: false, writer_bits: 0, steps: [], values: []
     }
 
 def serialize_float_test_hex(text:string) -> int:
@@ -55,8 +57,17 @@ def serialize_float_test_hex(text:string) -> int:
         body = substring(body, 2, -1)
     var value = 0
     for(length(body)) i:
-        let digit, _ok = string_to_int(substring(body, i, 1), 16)
+        let digit, ok = string_to_int(substring(body, i, 1), 16)
+        if not ok:
+            serialize_float_test_fail("non-digit in vector token")
         value = (value << 4) | digit
+    return value
+
+// A decimal integer token; anything else fails the test.
+def serialize_float_test_int(text:string) -> int:
+    let value, ok = string_to_int(text)
+    if not ok:
+        serialize_float_test_fail("not an integer: " + text)
     return value
 
 // The unsigned 128-bit pair helpers the 128-bit expectations need (DESIGN.md
@@ -95,7 +106,9 @@ def serialize_float_test_parse_int128(text:string) -> serialize_int128:
     let base = if hexadecimal: 16 else: 10
     var acc = serialize_int128 { lo: 0, hi: 0 }
     for(length(body)) i:
-        let digit, _ok = string_to_int(substring(body, i, 1), base)
+        let digit, ok = string_to_int(substring(body, i, 1), base)
+        if not ok:
+            serialize_float_test_fail("non-digit in vector token")
         if hexadecimal:
             acc = serialize_float_test_u128_add(serialize_float_test_u128_shl(acc, 4), serialize_int128 { lo: digit, hi: 0 })
         else:
@@ -155,9 +168,22 @@ def serialize_float_test_parse(text:string) -> [serialize_float_record]:
                     for(tokenize(substring(line, at + 2, -1), "|", " ")) v:
                         current.values.push(v)
             elif words[0] == "consumed" and length(words) >= 2:
-                current.consumed = string_to_int(words[1])
+                let consumed, ok = string_to_int(words[1])
+                if not ok:
+                    serialize_float_test_fail(current.name + ": consumed is not an integer")
+                current.consumed = consumed
             elif words[0] == "writer" and length(words) >= 2 and words[1] == "canonical":
                 current.writer = true
+            elif words[0] == "writer_input":
+                if length(words) < 4 or words[1] != "bits" or words[2] != "=":
+                    serialize_float_test_fail(current.name + ": writer_input is not bits")
+                let parsed = serialize_float_test_hex(words[3])
+                if substring(words[3], 0, 2) != "0x":
+                    serialize_float_test_fail(current.name + ": writer_input " + string(parsed))
+                current.writer_input = true
+                current.writer_bits = parsed
+            else:
+                serialize_float_test_fail("unknown key " + words[0])
     if has_current:
         records.push(current)
     return records
@@ -174,14 +200,20 @@ def serialize_float_test_count_operations(text:string) -> int:
 def serialize_float_test_param_int(record:serialize_float_record, name:string) -> int:
     for(length(record.param_names)) i:
         if record.param_names[i] == name:
-            return string_to_int(record.param_values[i])
+            let value, ok = string_to_int(record.param_values[i])
+            if not ok:
+                serialize_float_test_fail(record.name + ": " + name + " is not an integer")
+            return value
     serialize_float_test_fail(record.name + ": missing parameter " + name)
     return 0
 
 def serialize_float_test_param_float(record:serialize_float_record, name:string) -> float:
     for(length(record.param_names)) i:
         if record.param_names[i] == name:
-            return string_to_float(record.param_values[i])
+            let value, ok = string_to_float(record.param_values[i])
+            if not ok:
+                serialize_float_test_fail(record.name + ": " + name + " did not parse")
+            return value
     serialize_float_test_fail(record.name + ": missing parameter " + name)
     return 0.0
 
@@ -282,7 +314,7 @@ def serialize_float_test_run_fixed(record:serialize_float_record, label:string):
             return
         serialize_float_test_check(ok, label + ": accepted read refused")
         serialize_float_test_check(s.bits_processed() == record.consumed, label + ": consumed bits")
-        let want = string_to_int(record.value_text)
+        let want = serialize_float_test_int(record.value_text)
         serialize_float_test_check(value == want, label + ": value")
         if record.writer:
             let w = serialize_float_test_write(record.consumed)
@@ -309,7 +341,7 @@ def serialize_float_test_run_fixed(record:serialize_float_record, label:string):
             return
         serialize_float_test_check(ok, label + ": accepted read refused")
         serialize_float_test_check(s.bits_processed() == record.consumed, label + ": consumed bits")
-        let want = string_to_int(record.value_text)
+        let want = serialize_float_test_int(record.value_text)
         serialize_float_test_check(value == want, label + ": value")
         if record.writer:
             let w = serialize_float_test_write(record.consumed)
@@ -365,6 +397,23 @@ def serialize_float_test_run_compressed(record:serialize_float_record, label:str
     serialize_float_test_check(ok, label + ": accepted read refused")
     serialize_float_test_check(s.bits_processed() == record.consumed, label + ": consumed bits")
     serialize_float_test_check(serialize_float32_bits(value) == record.bits, label + ": bit pattern")
+    if record.writer or record.writer_input:
+        let w = serialize_float_test_write(record.consumed)
+        let input = if record.writer_input: serialize_float32_from_bits(record.writer_bits) else: value
+        var ignored = input
+        var write_ok = true
+        ignored, write_ok = w.serialize_compressed_float(input, min, max, res)
+        w.flush()
+        serialize_float_test_check(write_ok, label + ": canonical write refused")
+        serialize_float_test_check(w.bits_processed() == record.consumed, label + ": writer consumed bits")
+        serialize_float_test_same_bytes(record.bytes, w.buffer, w.bytes_processed(), label)
+        let roundtrip = serialize_read_stream(ensure_size(w.buffer, w.bytes_processed() + 8, 0), w.bytes_processed())
+        var decoded = 123.5
+        var read_ok = true
+        decoded, read_ok = roundtrip.serialize_compressed_float(decoded, min, max, res)
+        serialize_float_test_check(read_ok, label + ": round-trip read refused")
+        serialize_float_test_check(roundtrip.bits_processed() == record.consumed, label + ": round-trip consumed bits")
+        serialize_float_test_check(serialize_float32_bits(decoded) == record.bits, label + ": round-trip bit pattern")
 
 def serialize_float_test_run_record(record:serialize_float_record, file:string, index:int):
     let label = file + " " + string(index) + " " + record.name
@@ -399,7 +448,7 @@ def serialize_float_test_run_sequence(record:serialize_float_record, label:strin
             serialize_float_test_check(record.values[i] == (if b: "true" else: "false"), label + ": step " + string(i))
         elif words[0] == "bits" and length(words) == 2:
             var v = 0
-            v, ok = r.serialize_bits(v, string_to_int(words[1]))
+            v, ok = r.serialize_bits(v, serialize_float_test_int(words[1]))
             got.push(v)
             serialize_float_test_check(v == serialize_float_test_hex(record.values[i]), label + ": step " + string(i))
         elif words[0] == "float":
@@ -422,7 +471,7 @@ def serialize_float_test_run_sequence(record:serialize_float_record, label:strin
                 b, ok = w.serialize_bool(b)
             elif words[0] == "bits":
                 var v = got[i]
-                v, ok = w.serialize_bits(v, string_to_int(words[1]))
+                v, ok = w.serialize_bits(v, serialize_float_test_int(words[1]))
             else:
                 var f = serialize_float32_from_bits(got[i])
                 f, ok = w.serialize_float(f)
@@ -649,6 +698,36 @@ def TestSerializeFloat():
     serialize_float_test_finite_classes()
     serialize_float_test_compressed_finite_decode()
     serialize_float_test_compressed_bounds()
+
+// A byte token that is not hexadecimal must not parse as a number.
+// expect-abort: TestSerializeFloat: non-digit in vector token
+def TestRejectNonDigitInVectorToken():
+    let parsed = serialize_float_test_hex("0G")
+    print "parsed " + string(parsed)
+
+// A record key this runner does not know must fail the parse.
+// expect-abort: TestSerializeFloat: unknown key not_a_key
+def TestRejectUnknownRecordKey():
+    let records = serialize_float_test_parse("operation float\nname n\nnot_a_key 1\n")
+    print "records " + string(length(records))
+
+// An expect value that is not an integer must fail a fixed32 record.
+// expect-abort: TestSerializeFloat: not an integer: -832x
+def TestRejectNonIntegerFixed32ExpectValue():
+    let records = serialize_float_test_parse("operation fixed\nname n\nparam integer_bits = 8\nparam fraction_bits = 8\nparam min = -100\nparam max = 100\nbytes C0 60\nexpect value = -832x\nconsumed 16\nwriter canonical\n")
+    serialize_float_test_run_fixed(records[0], "fixed32 control")
+
+// An expect value that is not an integer must fail a fixed64 record.
+// expect-abort: TestSerializeFloat: not an integer: 4294967296x
+def TestRejectNonIntegerFixed64ExpectValue():
+    let records = serialize_float_test_parse("operation fixed\nname n\nparam integer_bits = 48\nparam fraction_bits = 16\nparam min = 0\nparam max = 131072\nbytes 00 00 00 00 01\nexpect value = 4294967296x\nconsumed 34\nwriter canonical\n")
+    serialize_float_test_run_fixed(records[0], "fixed64 control")
+
+// A bits step width that is not an integer must fail a sequence record.
+// expect-abort: TestSerializeFloat: not an integer: 32x
+def TestRejectNonIntegerBitsStepWidth():
+    let records = serialize_float_test_parse("operation sequence\nname n\nparam step = bits 32x\nparam step = float\nparam step = bits 32\nbytes 00 00 A0 7F 00 00 80 3F 01 00 80 FF\nexpect value = 0x7FA00000 | 0x3F800000 | 0xFF800001\nconsumed 96\nwriter canonical\n")
+    serialize_float_test_run_sequence(records[0], "bits width control")
 
 // ---------------------------------------------------------------------------
 // API misuse aborts (DESIGN.md (e), ABORT CASES): min >= max and res <= 0 on

@@ -427,7 +427,7 @@ def TestSerializeStringsNulBeforeUtf8WriteTraps():
     w.serialize_string("\xFF\x00", 16)
 
 // A string read holds the claimed length against the bytes that remain BEFORE
-// it allocates the payload (PORT-BRIEF 2026-10-22, allocate-before-check): a
+// it allocates the payload: a
 // 4-byte stream under a buffer_size of 2^31 that claims 2^31 - 1 bytes is
 // refused as past_end with its destination untouched, and nothing of the
 // claimed size is allocated. The same holds for a stream whose padding is set:
