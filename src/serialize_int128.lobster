@@ -26,6 +26,29 @@ def serialize_int128_from_int64(value:int) -> serialize_int128:
     let hi = if value < 0: -1 else: 0
     return serialize_int128 { lo: value, hi: hi }
 
+// The same bits, unsigned: sign extend into the high lane.
+def serialize_u128_from_int64(value:int) -> serialize_uint128:
+    return serialize_uint128 { lo: value, hi: if value < 0: -1 else: 0 }
+
+def serialize_int128_to_u128(v:serialize_int128) -> serialize_uint128:
+    return serialize_uint128 { lo: v.lo, hi: v.hi }
+
+def serialize_u128_to_int128(u:serialize_uint128) -> serialize_int128:
+    return serialize_int128 { lo: u.lo, hi: u.hi }
+
+// Logical left shift of an unsigned pair, n in [0,128], wrapping.
+def serialize_u128_shl(u:serialize_uint128, n:int) -> serialize_uint128:
+    if n <= 0:
+        return u
+    if n < 64:
+        return serialize_uint128 {
+            lo: serialize_shl(u.lo, n),
+            hi: serialize_shl(u.hi, n) | serialize_shr(u.lo, 64 - n)
+        }
+    if n < 128:
+        return serialize_uint128 { lo: 0, hi: serialize_shl(u.lo, n - 64) }
+    return serialize_uint128 { lo: 0, hi: 0 }
+
 def serialize_uint128_equal(a:serialize_uint128, b:serialize_uint128) -> bool:
     return a.lo == b.lo and a.hi == b.hi
 
@@ -137,8 +160,7 @@ def serialize_read_u128_bits(s:serialize_read_stream, bits:int) -> serialize_uin
 // The whole width is gated before any bit moves, so a full buffer traps and
 // writes nothing for this call (IMPLEMENTING.md U9, U10).
 def serialize_uint128(s:serialize_write_stream, value:serialize_uint128):
-    if not s.write_gate(128):
-        return value, false
+    s.write_gate(128)
     s.pack_bits64(value.lo, 64)
     s.pack_bits64(value.hi, 64)
     return value, true
@@ -177,8 +199,7 @@ def serialize_int128(s:serialize_write_stream, value:serialize_int128, min:seria
     if bits == 0:
         return value, true
     let offset = serialize_u128_sub(uvalue, umin)
-    if not s.write_gate(bits):
-        return value, false
+    s.write_gate(bits)
     serialize_write_u128_bits(s, offset, bits)
     return value, true
 

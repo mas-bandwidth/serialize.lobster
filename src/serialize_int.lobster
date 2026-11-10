@@ -35,8 +35,7 @@ def serialize_int(s:serialize_write_stream, value:int, min:int, max:int):
     if bits == 0:
         return value, true
     let offset = (value - min) & 0xFFFFFFFF
-    if not s.write_gate(bits):
-        return value, false
+    s.write_gate(bits)
     s.pack_bits(offset, bits)
     return value, true
 
@@ -80,8 +79,7 @@ def serialize_int64(s:serialize_write_stream, value:int, min:int, max:int):
     if bits == 0:
         return value, true
     let offset = value - min
-    if not s.write_gate(bits):
-        return value, false
+    s.write_gate(bits)
     s.pack_bits64(offset, bits)
     return value, true
 
@@ -151,55 +149,43 @@ def serialize_int_relative(s:serialize_write_stream, previous:int, current:int):
     serialize_check_int_relative_current(current)
     let difference = (current - previous) & 0xFFFFFFFF
     let total = serialize_int_relative_bits(difference)
-    if not s.write_gate(total):
-        return current, false
+    s.write_gate(total)
     var flag = false
     var ok = true
     if difference == 1:
         flag, ok = s.serialize_bool(true)
         return current, ok
     flag, ok = s.serialize_bool(false)
-    if not ok: return current, false
     if difference <= 6:
         flag, ok = s.serialize_bool(true)
-        if not ok: return current, false
         var d = 0
         d, ok = s.serialize_int(difference, 2, 6)
         return current, ok
     flag, ok = s.serialize_bool(false)
-    if not ok: return current, false
     if difference <= 23:
         flag, ok = s.serialize_bool(true)
-        if not ok: return current, false
         var d = 0
         d, ok = s.serialize_int(difference, 7, 23)
         return current, ok
     flag, ok = s.serialize_bool(false)
-    if not ok: return current, false
     if difference <= 280:
         flag, ok = s.serialize_bool(true)
-        if not ok: return current, false
         var d = 0
         d, ok = s.serialize_int(difference, 24, 280)
         return current, ok
     flag, ok = s.serialize_bool(false)
-    if not ok: return current, false
     if difference <= 4377:
         flag, ok = s.serialize_bool(true)
-        if not ok: return current, false
         var d = 0
         d, ok = s.serialize_int(difference, 281, 4377)
         return current, ok
     flag, ok = s.serialize_bool(false)
-    if not ok: return current, false
     if difference <= 69914:
         flag, ok = s.serialize_bool(true)
-        if not ok: return current, false
         var d = 0
         d, ok = s.serialize_int(difference, 4378, 69914)
         return current, ok
     flag, ok = s.serialize_bool(false)
-    if not ok: return current, false
     // The absolute tier transmits current, not the difference, over 32 raw
     // unsigned bits (STANDARD.md, int_relative).
     var raw = 0
