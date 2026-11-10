@@ -57,7 +57,9 @@ def serialize_float_test_hex(text:string) -> int:
         body = substring(body, 2, -1)
     var value = 0
     for(length(body)) i:
-        let digit, _ok = string_to_int(substring(body, i, 1), 16)
+        let digit, ok = string_to_int(substring(body, i, 1), 16)
+        if not ok:
+            serialize_float_test_fail("non-digit in vector token")
         value = (value << 4) | digit
     return value
 
@@ -97,7 +99,9 @@ def serialize_float_test_parse_int128(text:string) -> serialize_int128:
     let base = if hexadecimal: 16 else: 10
     var acc = serialize_int128 { lo: 0, hi: 0 }
     for(length(body)) i:
-        let digit, _ok = string_to_int(substring(body, i, 1), base)
+        let digit, ok = string_to_int(substring(body, i, 1), base)
+        if not ok:
+            serialize_float_test_fail("non-digit in vector token")
         if hexadecimal:
             acc = serialize_float_test_u128_add(serialize_float_test_u128_shl(acc, 4), serialize_int128 { lo: digit, hi: 0 })
         else:
@@ -157,12 +161,22 @@ def serialize_float_test_parse(text:string) -> [serialize_float_record]:
                     for(tokenize(substring(line, at + 2, -1), "|", " ")) v:
                         current.values.push(v)
             elif words[0] == "consumed" and length(words) >= 2:
-                current.consumed = string_to_int(words[1])
-            elif words[0] == "writer_input" and length(words) >= 4 and words[1] == "bits":
-                current.writer_input = true
-                current.writer_bits = serialize_float_test_hex(words[3])
+                let consumed, ok = string_to_int(words[1])
+                if not ok:
+                    serialize_float_test_fail(current.name + ": consumed is not an integer")
+                current.consumed = consumed
             elif words[0] == "writer" and length(words) >= 2 and words[1] == "canonical":
                 current.writer = true
+            elif words[0] == "writer_input":
+                if length(words) < 4 or words[1] != "bits" or words[2] != "=":
+                    serialize_float_test_fail(current.name + ": writer_input is not bits")
+                let parsed = serialize_float_test_hex(words[3])
+                if substring(words[3], 0, 2) != "0x":
+                    serialize_float_test_fail(current.name + ": writer_input " + string(parsed))
+                current.writer_input = true
+                current.writer_bits = parsed
+            else:
+                serialize_float_test_fail("unknown key " + words[0])
     if has_current:
         records.push(current)
     return records
@@ -179,14 +193,20 @@ def serialize_float_test_count_operations(text:string) -> int:
 def serialize_float_test_param_int(record:serialize_float_record, name:string) -> int:
     for(length(record.param_names)) i:
         if record.param_names[i] == name:
-            return string_to_int(record.param_values[i])
+            let value, ok = string_to_int(record.param_values[i])
+            if not ok:
+                serialize_float_test_fail(record.name + ": " + name + " is not an integer")
+            return value
     serialize_float_test_fail(record.name + ": missing parameter " + name)
     return 0
 
 def serialize_float_test_param_float(record:serialize_float_record, name:string) -> float:
     for(length(record.param_names)) i:
         if record.param_names[i] == name:
-            return string_to_float(record.param_values[i])
+            let value, ok = string_to_float(record.param_values[i])
+            if not ok:
+                serialize_float_test_fail(record.name + ": " + name + " did not parse")
+            return value
     serialize_float_test_fail(record.name + ": missing parameter " + name)
     return 0.0
 
@@ -634,6 +654,18 @@ def TestSerializeFloat():
     serialize_float_test_finite_classes()
     serialize_float_test_compressed_finite_decode()
     serialize_float_test_compressed_bounds()
+
+// A byte token that is not hexadecimal must not parse as a number.
+// expect-abort: TestSerializeFloat: non-digit in vector token
+def TestRejectNonDigitInVectorToken():
+    let parsed = serialize_float_test_hex("0G")
+    print "parsed " + string(parsed)
+
+// A record key this runner does not know must fail the parse.
+// expect-abort: TestSerializeFloat: unknown key not_a_key
+def TestRejectUnknownRecordKey():
+    let records = serialize_float_test_parse("operation float\nname n\nnot_a_key 1\n")
+    print "records " + string(length(records))
 
 // ---------------------------------------------------------------------------
 // API misuse aborts (DESIGN.md (e), ABORT CASES): min >= max and res <= 0 on
