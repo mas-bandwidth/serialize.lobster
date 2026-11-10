@@ -22,18 +22,20 @@
 #
 # The 2.1.1 rulings (IMPLEMENTING.md U6, U9, U15) add their own: each plants
 # the 2.1.0 behaviour (a write latch, a measure that is silent, a copy that
-# cuts at a byte) back and names the test that must then go red.
+# cuts at a byte) back and names the test that must then go red. U6's and
+# U9's "fail records nothing" on a measure and a write stream have no witness
+# here: those streams carry no latch or refusal state at all, so no one-line
+# plant can bring a latch back; TestU6MeasureRefusesNothing and
+# TestU9WriteFailRecordsNothing still pin the behaviour.
 float-write-finite	src/serialize_float.lobster	1	    if not serialize_float32_bits_are_finite(pattern):	    if not serialize_float32_bits_are_finite(pattern) and pattern == 0:	float	TestSerializeFloatSignalingNaNWriteTraps
 double-write-finite	src/serialize_float.lobster	1	    if not serialize_float64_bits_are_finite(pattern):	    if not serialize_float64_bits_are_finite(pattern) and pattern == 0:	float	TestSerializeDoubleNegativeInfinityWriteTraps
 compressed-float-write-top	src/serialize_compressed_float.lobster	1	    if not serialize_compressed_float_is_finite(top):	    if not serialize_compressed_float_is_finite(top) and top == 0.0:	float	TestSerializeFloatCompressedNonFiniteTopAbort
 first-reason-latch	src/serialize_stream.lobster	1	        if not failed:	        if failed or not failed:	smoke	TestSmoke
-u6-measure-latches	src/serialize_stream.lobster	1	    def fail(reason:serialize_refusal) -> bool: return false	    def fail_unused(reason:serialize_refusal) -> bool: return false	uniform	TestU6MeasureRefusesNothing
 u3-u4-measure-text	src/serialize_bytes.lobster	1	    if not string_utf8_valid(value, n):	    if not string_utf8_valid(value, n) and n < 0:	uniform	TestU3U4MeasureFollowsTheWriter
 u7-read-misuse-reason	src/serialize_stream.lobster	1	    return s.fail(serialize_refusal_value_out_of_range)	    return s.fail(serialize_refusal_past_end)	uniform	TestU7ReadMisuseRefuses
 u12-write-end	src/serialize_stream.lobster	1	def serialize_end(s::serialize_write_stream) -> bool: return true	def serialize_end(s::serialize_write_stream) -> bool: return false	uniform	TestU12EndOnWriteAndMeasure
 u14-fail-no-reason	src/serialize_stream.lobster	1	            refusal = if serialize_refusal_is_reason(reason): reason else: serialize_refusal_rejected	            refusal = reason	uniform	TestU14RefusalNamesAndFail
 u16-precomputed-domain	src/serialize_compressed_float.lobster	1	    return max_integer_value >= 1 and max_integer_value <= 4294967040 and bits == serialize_bits_required(0, max_integer_value) and fdelta > 0.0 and serialize_compressed_float_is_finite(fdelta)	    return max_integer_value >= 1 and bits == serialize_bits_required(0, max_integer_value) and fdelta > 0.0 and serialize_compressed_float_is_finite(fdelta)	uniform	TestU16PrecomputedMaxIntegerValueDomain
-u9-write-fail-records-nothing	src/serialize_stream.lobster	1	    def fail(why:serialize_refusal) -> bool: return false	    def fail_unused(why:serialize_refusal) -> bool: return false	uniform	TestU9WriteFailRecordsNothing
 u9-write-range-traps	src/serialize_int.lobster	1	    if value < min or value > max:	    if value < min and value > max:	uniform	TestU9WriteIntOutOfRangeTraps
 u9-write-width-traps	src/serialize_stream.lobster	1	    if bits < 64 and (value < 0 or value > serialize_mask(bits)):	    if bits < 64 and (value < 0 or value > serialize_mask(bits)) and bits < 0:	uniform	TestU9WriteBitsOverWideTraps
 u9-write-past-end-traps	src/serialize_stream.lobster	1	        serialize_abort("serialize: write does not fit the room left in the buffer")	        return s.fail(serialize_refusal_past_end)	uniform	TestU9WritePastEndTraps
