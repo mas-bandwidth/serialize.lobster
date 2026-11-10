@@ -549,6 +549,22 @@ def TestSerializeInt():
     int_round_trip64(min64, max64, max64 - 1)
     int_round_trip64(min64, max64, max64)
 
+    // Wrapping arithmetic at the 64-bit edges (DESIGN.md (c)): +, - and *
+    // wrap two's-complement, in every backend.
+    int_check(max64 + 1 == min64, "int64 add wraps past max")
+    int_check(min64 - 1 == max64, "int64 sub wraps past min")
+    int_check(4611686018427387904 * 4 == 0, "int64 mul wraps at 2^64")
+    int_check(-1 * min64 == min64, "int64 mul wraps at min")
+
+    // 128-bit carry and borrow at the lane boundary (DESIGN.md (c)).
+    let one128 = serialize_uint128_make(0, 1)
+    let carry_sum = serialize_u128_add(serialize_uint128_make(0, -1), one128)
+    int_check(carry_sum.lo == 0 and carry_sum.hi == 1, "uint128 add carries into hi")
+    let borrow_diff = serialize_u128_sub(serialize_uint128_make(1, 0), one128)
+    int_check(borrow_diff.lo == -1 and borrow_diff.hi == 0, "uint128 sub borrows from hi")
+    let wrapped128 = serialize_u128_add(serialize_uint128_make(-1, -1), one128)
+    int_check(wrapped128.lo == 0 and wrapped128.hi == 0, "uint128 add wraps at 2^128")
+
 // One past each bound on a write traps (IMPLEMENTING.md U9); above max is in
 // test/uniform's u9 tests. A degenerate range traps too, though it costs no bits.
 // expect-abort: serialize: value must be in [min, max]

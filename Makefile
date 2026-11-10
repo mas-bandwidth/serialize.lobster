@@ -9,6 +9,8 @@
 #
 # make test            run every test/*/*_test.lobster (JIT, the default)
 # make test T=<name>   run the files of test/<name>/ only
+# make test-cpp        run test/int through the --cpp C++ codegen backend
+#                      (clang -O2 with wrapping arithmetic, DESIGN.md (c))
 # make bench F=<file>  run a timed program BOTH ways: the JIT, then the --cpp
 #                      ahead-of-time build (clang -O2, the pin's dev/ tree)
 #
@@ -34,9 +36,9 @@ CLANGXX       ?= clang++
 CLANG_BINDIR  := $(dir $(realpath $(shell command -v $(CLANG) 2>/dev/null)))
 CPP_CMAKE_ARGS := -G Ninja -DLOBSTER_ENGINE=OFF -DCMAKE_BUILD_TYPE=Release \
 	-DCMAKE_C_COMPILER=$(CLANG) -DCMAKE_CXX_COMPILER=$(CLANGXX) \
-	"-DCMAKE_C_FLAGS_RELEASE=-O2 -DNDEBUG" "-DCMAKE_CXX_FLAGS_RELEASE=-O2 -DNDEBUG"
+	"-DCMAKE_C_FLAGS_RELEASE=-O2 -DNDEBUG -fwrapv" "-DCMAKE_CXX_FLAGS_RELEASE=-O2 -DNDEBUG -fwrapv"
 
-.PHONY: all dist-lobster toolchain-lobster test lobster-src lobster-cpp bench clean
+.PHONY: all dist-lobster toolchain-lobster test test-cpp lobster-src lobster-cpp bench clean
 all: test
 
 # dist-lobster fetches the pinned release and REFUSES any archive whose sha256
@@ -87,6 +89,26 @@ lobster-cpp: lobster-src
 	@PATH=$(CLANG_BINDIR):$$PATH cmake -S $(LOBSTER_SRC)/dev -B build/lobster-tocpp $(CPP_CMAKE_ARGS) -DLOBSTER_TOCPP=ON >build/lobster-tocpp.log 2>&1
 	@PATH=$(CLANG_BINDIR):$$PATH cmake --build build/lobster-tocpp -j 16 >>build/lobster-tocpp.log 2>&1
 	@$(LOBSTER_SRC)/bin/compiled_lobster
+
+# test-cpp: TestSerializeInt (the int64 full-range round-trips and the
+# 128-bit carry checks) through the --cpp backend, built with the flags
+# above. The driver and its conformance corpus are staged as in
+# tools/run_tests.sh; the corpus is also staged beside the compiled
+# binary's data dir ($(LOBSTER_SRC)), where its file reads resolve.
+test-cpp: toolchain-lobster
+	@if [ ! -x $(LOBSTER_SRC)/bin/compiled_lobster ] || [ ! -d build/lobster-tocpp ]; then $(MAKE) --no-print-directory lobster-cpp; fi
+	@rm -rf build/cpp-test && mkdir -p build/cpp-test/int
+	@cp src/*.lobster test/int/*.lobster build/cpp-test/int/
+	@cp -r conformance build/cpp-test/int/conformance
+	@printf 'import int_test\nTestSerializeInt()\nprint "serialize-test-done"\n' > build/cpp-test/int/_cpp_int_test.lobster
+	@cd build/cpp-test/int && $(LOBSTER_SRC)/bin/lobster --cpp _cpp_int_test.lobster
+	@rm -rf $(LOBSTER_SRC)/conformance && cp -r build/cpp-test/int/conformance $(LOBSTER_SRC)/conformance
+	@PATH=$(CLANG_BINDIR):$$PATH cmake --build build/lobster-tocpp -j 16 >>build/lobster-tocpp.log 2>&1
+	@out=$$($(LOBSTER_SRC)/bin/compiled_lobster 2>&1); code=$$?; \
+	printf '%s\n' "$$out"; \
+	if [ $$code -ne 0 ] || ! printf '%s\n' "$$out" | grep -qx 'serialize-test-done'; then \
+		echo "test-cpp FAIL: the --cpp int test did not complete"; exit 1; fi
+	@echo "test-cpp ok: TestSerializeInt passed through the --cpp backend"
 
 # bench: F is a .lobster program; it runs staged beside a copy of src/ (so
 # `import serialize` resolves), first under the JIT, then as --cpp.
