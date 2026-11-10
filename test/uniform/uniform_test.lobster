@@ -219,6 +219,29 @@ def TestU7ReadMisuseRefuses():
     str, ok = f1.serialize_string(str, 0)
     assert not ok and str == "SENTINEL" and f1.refusal_name() == "past_end"
 
+// U7: bytes of zero count into an empty destination is not misuse on any
+// stream: it aligns, as every bytes does, and copies nothing. (A Lobster
+// string is never nil, so a bytes read with no destination cannot be written.)
+def TestU7ZeroLengthBytesAligns():
+    var b = true
+    var str = ""
+    var ok = false
+    let w = serialize_write_stream(ensure_size("", 8, 0))
+    b, ok = w.serialize_bool(b)
+    str, ok = w.serialize_bytes(str, 0)
+    assert ok and w.bits_processed() == 8 and str == ""
+    w.flush()
+    assert read_uint8_le(w.buffer, 0) == 1
+    let r = serialize_read_stream_padded("\x01")
+    b, ok = r.serialize_bool(false)
+    assert ok and b
+    str, ok = r.serialize_bytes(str, 0)
+    assert ok and r.ok() and r.bits_processed() == 8 and str == ""
+    let m = serialize_measure_stream()
+    b, ok = m.serialize_bool(b)
+    str, ok = m.serialize_bytes(str, 0)
+    assert ok and m.bits_processed() == 8
+
 // U5 on a write: bounds outside int32 are caught on the caller's value,
 // before anything narrows it (the port's write-misuse abort).
 // expect-abort: serialize: max must be in [INT32_MIN, INT32_MAX]

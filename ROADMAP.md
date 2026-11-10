@@ -11,7 +11,7 @@ The Lobster port of serialize, the open-source bitpacking serializer: the same w
 | feature | lobster |
 |---|:---:|
 | Design, family stubs and test runner | ✅ |
-| STANDARD.md matches serialize v2.1.1 | ✅ |
+| STANDARD.md matches serialize v2.1.4 | ✅ |
 | Fleet CI workflow and its invariant test | ✅ |
 | 64-bit bitpacker and window reader | ✅ |
 | Ranged integers, int64, int128, uint128 and relative ints | ✅ |
@@ -32,4 +32,4 @@ The Lobster port of serialize, the open-source bitpacking serializer: the same w
 
 ## About this page
 
-Each table lists the features of one area: ✅ is built, tested and landed, with the evidence in the source data; ❌ is not yet. The open rows were sprint cards when the sprint stopped for its pit stop on 2026-10-20; each one names its card, its archived brief and any pushed head in the source data, so the work can be picked up again.
+Each table lists the features of one area: ✅ is built, tested and landed, with the evidence in the source data; ❌ is not yet. Each open row names any pushed head in the source data, so the work can be picked up again.

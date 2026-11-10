@@ -1,8 +1,8 @@
 /*
     fuzz/host.c -- TestDifferentialAgainstSerializeC.
 
-    A fixed-seed generator writes 2000 random programs.  serialize.c v2.0.0
-    (the oracle, compiled from .ref/serialize.c-v2.0.0) writes and reads each one, and
+    A fixed-seed generator writes 2000 random programs.  serialize.c v2.1.2
+    (the oracle, compiled from .ref/serialize.c-v2.1.2) writes and reads each one, and
     the Lobster port is driven as a child process over files in this test's own
     temporary directory, one process per batch of 100 programs.  Every
     program ends with an end (STANDARD.md, end), and every float and double it
@@ -591,7 +591,8 @@ static int write_program(Program *p, unsigned char *buf, int cap, int widen, int
         case OP_DOUBLE: serialize_write_double(&w, f64_from_bits(o->u)); break;
         case OP_FIXED32: {
             int ibits = o->bits, fbits = o->frac;
-            if (widen == 2 && !*widen_done && fbits > 0 && ibits > 1 && o->min < 0 && o->max > 0) {
+            if (widen == 2 && !*widen_done && fbits > 0 && ibits > 1 && o->min < 0 && o->max > 0 &&
+                serialize_fixed_declaration_is_valid(32, ibits - 1, fbits + 1, o->min, o->max)) {
                 ibits -= 1;
                 fbits += 1;
                 *widen_done = 1;
@@ -601,7 +602,8 @@ static int write_program(Program *p, unsigned char *buf, int cap, int widen, int
         }
         case OP_FIXED64: {
             int ibits = o->bits, fbits = o->frac;
-            if (widen == 2 && !*widen_done && fbits > 0 && ibits > 1 && o->min < 0 && o->max > 0) {
+            if (widen == 2 && !*widen_done && fbits > 0 && ibits > 1 && o->min < 0 && o->max > 0 &&
+                serialize_fixed_declaration_is_valid(64, ibits - 1, fbits + 1, o->min, o->max)) {
                 ibits -= 1;
                 fbits += 1;
                 *widen_done = 1;
@@ -612,7 +614,8 @@ static int write_program(Program *p, unsigned char *buf, int cap, int widen, int
         case OP_FIXED128: {
             int ibits = o->bits, fbits = o->frac;
             serialize_uint128_t raw_v = serialize_uint128_make(o->u2, o->u);
-            if (widen == 2 && !*widen_done && fbits > 0 && ibits > 1 && o->min < 0 && o->max > 0) {
+            if (widen == 2 && !*widen_done && fbits > 0 && ibits > 1 && o->min < 0 && o->max > 0 &&
+                serialize_fixed_declaration_is_valid(128, ibits - 1, fbits + 1, o->min, o->max)) {
                 ibits -= 1;
                 fbits += 1;
                 *widen_done = 1;

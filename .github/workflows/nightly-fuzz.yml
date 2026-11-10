@@ -1,7 +1,7 @@
 name: nightly fuzz
 
 # A functional test, nightly, on our own fleet: the differential fuzz against
-# serialize.c v2.0.0 (make/fuzz.mk, fuzz/host.c), run for an hour instead of
+# serialize.c v2.1.2 (make/fuzz.mk, fuzz/host.c), run for an hour instead of
 # the per-push gate's 2000 fixed-seed programs, from a fresh seed every run.
 #
 # ci.yml runs `make fuzz` at its defaults on every push: the same 2000

@@ -6,8 +6,9 @@ schema's Lobster leg. This page settles every decision, so each family card
 after it fills one set of files and decides nothing. Sections (a) to (g) are
 the contract.
 
-**The oracle.** serialize.c v2.0.0 (`e11585b0dfbf214ed37c442d5f8b6133fd8b10df`),
-format 2.0, is the reference. This port matches it byte for byte and refusal for refusal.
+**The oracle.** serialize.c v2.1.2 (`db892f4ca576624817fc26bcbe2c7f2e66e367ac`),
+format 2.0, is the reference; before it, v2.0.0
+(`e11585b0dfbf214ed37c442d5f8b6133fd8b10df`). This port matches it byte for byte and refusal for refusal.
 serialize.luau
 (`e9acef6fee5efbb1c7b33a25843dba9aa59f6b22`) is the closest worked port and
 shaped this page. Both are read and never imported. STANDARD.md's
@@ -16,12 +17,12 @@ and serialize.c disagree, serialize.c and STANDARD.md decide.
 
 **The vendored standard.** `STANDARD.md`, `IMPLEMENTING.md`, `conformance/`
 and `conformance-controls/` are copied
-VERBATIM from mas-bandwidth/serialize at tag v2.1.3. They carry the 2.1.1
+VERBATIM from mas-bandwidth/serialize at tag v2.1.4. They carry the 2.1.1
 rulings: one
 write-misuse mechanism, the trap (U9); a measure checks what a write checks
 (U6); `serialize_copy_string` backs off to a whole character and the exports
 ruling (U15). The corpus and STANDARD.md are unchanged since v2.1.0, and only
-IMPLEMENTING.md's text moved. Before it the pins were tag v2.1.1
+IMPLEMENTING.md's text moved. Before it the pins were tag v2.1.3, tag v2.1.1
 (`bd3d67e23c8acc2c45eff69633dbe16c029a2cba`), tag v2.1.0
 (`884bc3098c9619d67308d9c6b5cdf38593d98b69`: format 2.0, standard 2.1, the
 `rejected` reason and the uniform rules U1 to U16), tag v2.0.1 (`b812b75cc0a75dd925af74103ab1f155b9431ac1`),
@@ -36,8 +37,8 @@ Nothing here edits them; a change arrives by re-vendoring from a new ref.
 **The pin.** Lobster v2026.8 is pinned through its release zip, with the sha256
 below. The tag `v2026.8` is the annotated tag object
 `0921f7dd57458e1373a054880b84ceb9b5d719a5`, which points at commit
-`acc66d71978ae5525be1356aa622fbaa9a57e848`. The brief's "commit 0921f7dd5745"
-is the tag object; the `--cpp` leg checks out the commit. The setup is
+`acc66d71978ae5525be1356aa622fbaa9a57e848`. `0921f7dd5745` is the tag object,
+not a commit; the `--cpp` leg checks out the commit. The setup is
 `make dist-lobster`, described in (g).
 
 ## (a) THE API
@@ -395,7 +396,7 @@ Decided:
 ## (e) WRITER AND READER
 
 **The writer is STRICT.** For every value, it emits exactly the bytes
-serialize.c v2.0.0 emits. serialize.c's write path is trusted and asserts in
+serialize.c v2.1.2 emits. serialize.c's write path is trusted and asserts in
 debug builds only (its ERRORS block, STANDARD.md's writes-trusted doctrine).
 This port has no NDEBUG and no unchecked build: every Lobster build runs the
 same code, so it is a checked build, always, and traps in every run
@@ -524,11 +525,11 @@ this port changed for 2.1 has a reversed witness in tools/controls/witnesses.txt
 | U3, U4 | a string with a NUL or not well-formed UTF-8 traps on a write and on a measure, and writes nothing; a Lobster string is bytes and goes on the wire as given, with no codec (TestU9WriteStringNulTraps, TestU9WriteStringBadUtf8Traps, TestU3U4MeasureFollowsTheWriter, TestU6MeasureString*Traps) |
 | U5 | `serialize_int` bounds outside int32 abort on a write or a measure and refuse on a read (TestU5IntBoundsOutsideInt32AbortOnWrite, TestU7ReadMisuseRefuses) |
 | U6 | a measure makes every check a write makes, except room, by the trap, and latches nothing; its `fail` and a refusing object return `false` and record nothing (TestU6Measure*Traps, TestU6MeasureRefusesNothing, TestU6MeasureFailAndObjectRecordNothing) |
-| U7, U16 | read misuse and bad declarations refuse `value_out_of_range` (TestU7ReadMisuseRefuses, TestU16PrecomputedMaxIntegerValueDomain) |
+| U7, U16 | read misuse and bad declarations refuse `value_out_of_range` (TestU7ReadMisuseRefuses, TestU16PrecomputedMaxIntegerValueDomain); bytes of zero count aligns and copies nothing on every stream, and a Lobster string is never nil (TestU7ZeroLengthBytesAligns); every read's destination is typed (`int` is 64 bits, `bool` takes one bit, the 128-bit carriers, a string whose length the bytes read checks), so the scalar destination width rule has nothing to check |
 | U8 | an over-wide value traps on a write, checked on the caller's value (TestU9WriteBitsOverWideTraps, TestBitpackerWriteOverWideTraps) |
 | U9 | one mechanism, the trap (`serialize_abort`, exit 70), in every run: values, declarations, room and `reject` on a write or a measure; never a latch; `fail` and a refusing object return `false` and record nothing (test/uniform/u9_test.lobster) |
 | U10 | the whole operation's width is gated before a bit moves, and an operation that does not fit traps (TestU10WholeOperationRoom, TestU9WriteStringPayloadPastEndTraps) |
-| U11 | flush is required |
+| U11 | flush is required; a write after a flush that stored a partial word traps in `pack_bits` and `pack_bytes` (TestBitpackerWriteBitsAfterFlush8Traps and its three siblings) |
 | U12 | `serialize_end` on a write or a measure returns `true` (TestU12EndOnWriteAndMeasure) |
 | U13 | no re-initialization |
 | U14 | `serialize_refusal_name`, `"none"` for none, and a public `fail`; no reason or one outside the list records `rejected` (TestU14RefusalNamesAndFail) |
@@ -557,7 +558,8 @@ port promises their behaviour:
   `serialize_compressed_float_params`, `string_utf8_valid` (the reference's
   `string_is_valid_utf8`), and `serialize_format_version` (STANDARD.md,
   Format version).
-- **`serialize_version`**: the vendored standard's release, `"2.1.3"`.
+- **`serialize_version`**: this port's release, `"2.1.3"`; its tag is
+  `v2.1.3`, and `make check-ci` refuses a release tag that differs.
 - **Language necessities**, each one because Lobster lacks what the
   reference's types give C++: the 128-bit carriers `serialize_uint128` and
   `serialize_int128` with `serialize_uint128_make`, `serialize_int128_make`,

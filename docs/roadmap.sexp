@@ -5,22 +5,18 @@
 ; fails when the committed page is not what this data renders. Never edit ROADMAP.md by hand.
 ;
 ; A cell is ✅ only when every task under it is :done, and a :done task names its evidence (the
-; land commit of the sprint card that built it, on the branch named). Every ❌ task names its
-; sprint card, the archive file that keeps the card's whole brief and record, and its last pushed
-; head. Rewritten 2026-10-20 at the pit stop, when every sprint stream that is not
-; rocketnet was archived: "Archive everything from the sprint that isn't rocketnet. Move the cards into their
-; respective roadmaps."
+; commit that built it, on the branch named). Every ❌ task names any pushed head.
 (:schema 1 :root "serialize-lobster/roadmap"
  :page (:title "serialize.lobster roadmap"
         :roadmaps ("port")
-        :closing ((:title "About this page" :text ("Each table lists the features of one area: ✅ is built, tested and landed, with the evidence in the source data; ❌ is not yet. The open rows were sprint cards when the sprint stopped for its pit stop on 2026-10-20; each one names its card, its archived brief and any pushed head in the source data, so the work can be picked up again."))))
+        :closing ((:title "About this page" :text ("Each table lists the features of one area: ✅ is built, tested and landed, with the evidence in the source data; ❌ is not yet. Each open row names any pushed head in the source data, so the work can be picked up again."))))
  :nodes
  ((:id "serialize-lobster/roadmap" :type :work-set :children ("port"))
   (:id "port" :type :roadmap :title "The Lobster port of serialize"
    :text ("The Lobster port of serialize, the open-source bitpacking serializer: the same wire as serialize.c, byte for byte, with the same refusals, each for the same reason. Format 2.0 (serialize v2.0.0): finite floats only, an end that refuses trailing bytes and set padding, canonical int_relative, and no wstring. Standard 2.1 (serialize v2.1.0): the caller's own refusal, rejected, and the uniform rules U1 to U16. The 2.1.1 rulings (serialize v2.1.1): one write-misuse mechanism, the trap; a measure checks what a write checks; copy_string backs off to a whole character; the public surface documented.")
    :rows
    (("design" "Design, family stubs and test runner")
-    ("standard" "STANDARD.md matches serialize v2.1.1")
+    ("standard" "STANDARD.md matches serialize v2.1.4")
     ("ci" "Fleet CI workflow and its invariant test")
     ("bitpacker" "64-bit bitpacker and window reader")
     ("integers" "Ranged integers, int64, int128, uint128 and relative ints")
@@ -55,7 +51,8 @@
   (:id "serialize-lobster-standard-v2" :type :task :title "STANDARD.md, IMPLEMENTING.md, conformance/ and conformance-controls/ match serialize v2.0.0" :state :done :evidence ("commit 6abfa77 on rowan/format-2.0 (tools/revendor.sh v2.0.0; the CI corpus job diffs all four against the tag)"))
   (:id "serialize-lobster-standard-v21" :type :task :title "STANDARD.md, IMPLEMENTING.md, conformance/ and conformance-controls/ match serialize v2.1.0" :state :done :evidence ("branch rowan/2.1.0: tools/revendor.sh v2.1.0 (884bc3098c96); the CI corpus job diffs all four against the tag"))
   (:id "serialize-lobster-standard-v211" :type :task :title "STANDARD.md, IMPLEMENTING.md, conformance/ and conformance-controls/ match serialize v2.1.1" :state :done :evidence ("branch rowan/2.1.1-rulings: tools/revendor.sh v2.1.1; the CI corpus job diffs all four against the tag"))
-  (:id "port/standard" :type :work-set :children ("serialize-lobster-standard-matches-upstream" "serialize-lobster-standard-v2" "serialize-lobster-standard-v21" "serialize-lobster-standard-v211"))
+  (:id "serialize-lobster-standard-v214" :type :task :title "STANDARD.md, IMPLEMENTING.md, conformance/ and conformance-controls/ match serialize v2.1.4" :state :done :evidence ("commit bbf54a1 on stitch/port: tools/revendor.sh v2.1.4; the CI corpus job diffs all four against the tag"))
+  (:id "port/standard" :type :work-set :children ("serialize-lobster-standard-matches-upstream" "serialize-lobster-standard-v2" "serialize-lobster-standard-v21" "serialize-lobster-standard-v211" "serialize-lobster-standard-v214"))
   (:id "serialize-lobster-ci" :type :task :title "Fleet CI workflow and its invariant test" :state :done :evidence ("land commit 164cd027da18 on sprint/serialize-lobster (card serialize-lobster-ci, stream serialize-lobster)"))
   (:id "port/ci" :type :work-set :children ("serialize-lobster-ci"))
   (:id "serialize-lobster-bitpacker" :type :task :title "64-bit bitpacker and window reader" :state :done :evidence ("land commit 60dc28704279 on sprint/serialize-lobster (card serialize-lobster-bitpacker, stream serialize-lobster)"))
@@ -78,8 +75,8 @@
   (:id "serialize-lobster-fuzz-differential" :type :task :title "Differential fuzzing against serialize.c" :state :done :evidence ("land commit 2a26bfdb80ac on sprint/serialize-lobster (card serialize-lobster-fuzz-differential, stream serialize-lobster)"))
   (:id "port/fuzz" :type :work-set :children ("serialize-lobster-fuzz-differential"))
   (:id "serialize-lobster-bench" :type :task :title "Benchmark against serialize.c, C++ serialize and serialize.rs" :state :todo :evidence ()
-   :note "card serialize-lobster-bench (stream serialize-lobster, working when archived); last pushed head bea0405a5e68df20de65535238d45ae0162c4270 on sprint/serialize-lobster-bench.w1.g1.e21; brief archived")
+   :note "started; last pushed head bea0405a5e68df20de65535238d45ae0162c4270 on sprint/serialize-lobster-bench.w1.g1.e21")
   (:id "port/bench" :type :work-set :children ("serialize-lobster-bench"))
   (:id "serialize-lobster-bench-report" :type :task :title "Goose vs C++ vs Rust (and Lobster) benchmark report" :state :todo :evidence ()
-   :note "card serialize-lobster-bench-report (stream serialize-lobster, waiting when archived); no pushed head; brief archived")
+   :note "not started; waits on serialize-lobster-bench")
   (:id "port/bench-report" :type :work-set :children ("serialize-lobster-bench-report"))))

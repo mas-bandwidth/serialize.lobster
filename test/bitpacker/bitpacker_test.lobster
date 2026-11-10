@@ -626,7 +626,7 @@ def TestBitpacker():
     test_bits_required()
     test_read_latch_over_valid_data()
 
-// The entry exports the vendored serialize standard's release version.
+// The entry exports this port's release version.
 def TestSerializeVersion():
     assert serialize_version == "2.1.3"
 

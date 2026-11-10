@@ -9,7 +9,7 @@
 // This card lands without serialize-lobster-integers, so the unsigned 128-bit
 // pair arithmetic the wide path needs (DESIGN.md (c), "128 bits") lives here,
 // written over the { lo, hi } lanes the int128 family defines. The bytes are
-// serialize.c v2.0.0's.
+// serialize.c v2.1.2's.
 import .serialize_stream
 import .serialize_bitpacker
 import .serialize_int128

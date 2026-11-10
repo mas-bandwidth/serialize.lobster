@@ -2,7 +2,7 @@
 // and the parameter derivation (STANDARD.md, Floating Point, compressed_float;
 // DESIGN.md (c), (f)).
 //
-// The arithmetic is float32 with every step rounded, in serialize.c v2.0.0's
+// The arithmetic is float32 with every step rounded, in serialize.c v2.1.2's
 // order (STANDARD.md, compressed_float): the product rounds before 0.5 is
 // added and that sum rounds before the floor; the decode rounds the quotient,
 // the product before min is added, and the sum.
