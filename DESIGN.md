@@ -557,7 +557,8 @@ port promises their behaviour:
   `serialize_compressed_float_params`, `string_utf8_valid` (the reference's
   `string_is_valid_utf8`), and `serialize_format_version` (STANDARD.md,
   Format version).
-- **`serialize_version`**: the vendored standard's release, `"2.1.3"`.
+- **`serialize_version`**: this port's release, `"2.1.3"`; its tag is
+  `v2.1.3`, and `make check-ci` refuses a release tag that differs.
 - **Language necessities**, each one because Lobster lacks what the
   reference's types give C++: the 128-bit carriers `serialize_uint128` and
   `serialize_int128` with `serialize_uint128_make`, `serialize_int128_make`,

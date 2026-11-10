@@ -3,6 +3,7 @@ name: ci
 on:
   push:
     branches: [main, sprint/serialize-lobster]
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
 

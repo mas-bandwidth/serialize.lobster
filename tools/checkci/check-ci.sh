@@ -6,14 +6,15 @@
 # naming the line, on any runs-on that is not [self-hosted, Linux, X64, fleet, serialize],
 # when ci.yml spells a toolchain URL or sha256 (the pin lives once, in the
 # Makefile), when the workflow does not run `make dist-lobster` and `make test`,
-# or when its corpus pin (SERIALIZE_REF) differs from DESIGN.md's pin. A step that can never fail
+# when its corpus pin (SERIALIZE_REF) differs from DESIGN.md's pin, or when a release tag being
+# built is not v<serialize_version>. A step that can never fail
 # is refused too (audit 2026-10-27): a `make NAME` whose target no Makefile defines, and a run
 # guarded by a file test (`if [ -f ... ]`), which skips green when the file is gone. Every other workflow in
 # .github/workflows/ (the nightly functional test) is held to the same runner
 # and the same one-place pin. Its own controls are
 # scratch copies of ci.yml with `runs-on: ubuntu-latest` and with a pasted
-# sha256, without the fork guard, and with the 2.0 bench step that could never fail: every copy
-# must fail this check, or TestCheckCI fails.
+# sha256, without the fork guard, and with the 2.0 bench step that could never fail, and a build
+# of the tag v0.0.0: every one must fail this check, or TestCheckCI fails.
 set -u
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
@@ -138,6 +139,19 @@ printf 'RUN TestCheckCI\n'
 
 check_file "$ci"
 
+# A release tag names the port's release, serialize_version (DESIGN.md, "The
+# public surface"): the tag being built, or any tag on HEAD outside CI.
+version=$(sed -n 's/^let serialize_version = "\([^"]*\)"$/\1/p' "$root/src/serialize.lobster")
+[ -n "$version" ] || fail "$root/src/serialize.lobster: no serialize_version"
+case "${GITHUB_REF:-}" in
+refs/tags/*) tags=${GITHUB_REF#refs/tags/} ;;
+'') tags=$(git -C "$root" tag --points-at HEAD 2>/dev/null) ;;
+*) tags= ;;
+esac
+for tag in $tags; do
+	[ "$tag" = "v$version" ] || fail "tag $tag does not name serialize_version $version"
+done
+
 # Every other workflow: the fleet runner and the Makefile pin, as ci.yml.
 if [ $# -eq 0 ]; then
 	for wf in "$root"/.github/workflows/*.yml; do
@@ -197,6 +211,13 @@ if [ $# -eq 0 ] && [ "$bad" -eq 0 ]; then
 		else
 			printf 'control: scratch ci.yml with the bench step that can never fail failed as required:\n'
 			sed 's/^/  /' "$ctl/bench.out"
+		fi
+
+		if GITHUB_REF=refs/tags/v0.0.0 sh "$0" "$ci" >"$ctl/tag.out" 2>&1; then
+			fail "control: a release tag v0.0.0 that is not serialize_version passed; it must fail"
+		else
+			printf 'control: a release tag v0.0.0 that is not serialize_version failed as required:\n'
+			sed 's/^/  /' "$ctl/tag.out"
 		fi
 
 		rm -rf "$ctl"
