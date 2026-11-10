@@ -6,8 +6,9 @@ schema's Lobster leg. This page settles every decision, so each family card
 after it fills one set of files and decides nothing. Sections (a) to (g) are
 the contract.
 
-**The oracle.** serialize.c v2.0.0 (`e11585b0dfbf214ed37c442d5f8b6133fd8b10df`),
-format 2.0, is the reference. This port matches it byte for byte and refusal for refusal.
+**The oracle.** serialize.c v2.1.2 (`db892f4ca576624817fc26bcbe2c7f2e66e367ac`),
+format 2.0, is the reference; before it, v2.0.0
+(`e11585b0dfbf214ed37c442d5f8b6133fd8b10df`). This port matches it byte for byte and refusal for refusal.
 serialize.luau
 (`e9acef6fee5efbb1c7b33a25843dba9aa59f6b22`) is the closest worked port and
 shaped this page. Both are read and never imported. STANDARD.md's
@@ -395,7 +396,7 @@ Decided:
 ## (e) WRITER AND READER
 
 **The writer is STRICT.** For every value, it emits exactly the bytes
-serialize.c v2.0.0 emits. serialize.c's write path is trusted and asserts in
+serialize.c v2.1.2 emits. serialize.c's write path is trusted and asserts in
 debug builds only (its ERRORS block, STANDARD.md's writes-trusted doctrine).
 This port has no NDEBUG and no unchecked build: every Lobster build runs the
 same code, so it is a checked build, always, and traps in every run

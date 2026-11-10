@@ -1,8 +1,8 @@
 /*
     fuzz/host.c -- TestDifferentialAgainstSerializeC.
 
-    A fixed-seed generator writes 2000 random programs.  serialize.c v2.0.0
-    (the oracle, compiled from .ref/serialize.c-v2.0.0) writes and reads each one, and
+    A fixed-seed generator writes 2000 random programs.  serialize.c v2.1.2
+    (the oracle, compiled from .ref/serialize.c-v2.1.2) writes and reads each one, and
     the Lobster port is driven as a child process over files in this test's own
     temporary directory, one process per batch of 100 programs.  Every
     program ends with an end (STANDARD.md, end), and every float and double it

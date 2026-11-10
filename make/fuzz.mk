@@ -1,6 +1,6 @@
 # make/fuzz.mk -- the fuzz differential against serialize.c (DESIGN.md (g);
 # STANDARD.md, the reference oracle).  `make fuzz` builds fuzz/host.c against
-# the vendored serialize.c v2.0.0 oracle in .ref/, stages fuzz_driver.lobster
+# the vendored serialize.c v2.1.2 oracle in .ref/, stages fuzz_driver.lobster
 # beside src/, and runs TestDifferentialAgainstSerializeC: 2000 fixed-seed
 # programs, one Lobster child process per batch of 100 over files in the
 # test's own temporary directory.  The negative control makes the C side write
@@ -18,7 +18,7 @@
 # `make fuzz-run` is the differential run alone (no controls), for
 # reproducing: make fuzz-run FUZZ_SEED=<seed> FUZZ_PROGRAMS=<n>.
 
-FUZZ_REF     := $(CURDIR)/.ref/serialize.c-v2.0.0
+FUZZ_REF     := $(CURDIR)/.ref/serialize.c-v2.1.2
 FUZZ_BUILD   := $(CURDIR)/build/fuzz
 FUZZ_HOST    := $(FUZZ_BUILD)/host
 FUZZ_STAGE   := $(FUZZ_BUILD)/stage
@@ -39,13 +39,13 @@ FUZZ_KNOBS := $(if $(FUZZ_SEED),--seed $(FUZZ_SEED)) \
 
 .PHONY: fuzz fuzz-run fuzz-warnings fuzz-ref
 
-# The oracle, read only: serialize.c v2.0.0, header-only.  Cloned once into
+# The oracle, read only: serialize.c v2.1.2, header-only.  Cloned once into
 # .ref/ (gitignored, and excluded through .git/info/exclude).
 fuzz-ref:
 	@if [ ! -f "$(FUZZ_REF)/serialize.h" ]; then \
 		mkdir -p .ref; \
-		git clone -q --branch v2.0.0 --depth 1 https://github.com/mas-bandwidth/serialize.c .ref/serialize.c-v2.0.0 || \
-		{ echo "fuzz REFUSES: cannot clone serialize.c v2.0.0 into .ref/serialize.c-v2.0.0"; exit 1; }; \
+		git clone -q --branch v2.1.2 --depth 1 https://github.com/mas-bandwidth/serialize.c .ref/serialize.c-v2.1.2 || \
+		{ echo "fuzz REFUSES: cannot clone serialize.c v2.1.2 into .ref/serialize.c-v2.1.2"; exit 1; }; \
 	fi
 	@grep -qxF '.ref/' .git/info/exclude 2>/dev/null || echo '.ref/' >> .git/info/exclude
 

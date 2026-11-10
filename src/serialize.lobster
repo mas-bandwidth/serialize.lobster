@@ -1,6 +1,6 @@
 // serialize.lobster — the entry (DESIGN.md (a), (f)): `import serialize`
 // brings in the streams and every family. A port of serialize, the
-// open-source bitpacking serializer, wire compatible with serialize.c v2.0.0
+// open-source bitpacking serializer, wire compatible with serialize.c v2.1.2
 // (STANDARD.md, format version 2.0, as vendored from serialize v2.1.4).
 
 import .serialize_stream
@@ -18,4 +18,4 @@ import .serialize_object
 // declarations: this port's release (its tag is v<serialize_version>), and the
 // version of serialize.c.
 let serialize_version = "2.1.3"
-let serialize_reference_version = "serialize.c 2.0.0"
+let serialize_reference_version = "serialize.c 2.1.2"
