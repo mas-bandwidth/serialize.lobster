@@ -9,10 +9,10 @@
 // (src/serialize_bitpacker.lobster, DESIGN.md (f)).
 
 // ---------------------------------------------------------------------------
-// abort: the trap (IMPLEMENTING.md U9). Every write and measure misuse, and
-// every stub, ends here: it prints the rule and exits 70. Lobster has no
-// unchecked build, so it traps in every run. Never reached from data: a read
-// refusal latches, it never aborts (U7).
+// abort: the trap (IMPLEMENTING.md U9). Every write and measure misuse ends
+// here: it prints the rule and exits 70. The stub uses the same trap. Lobster
+// has no unchecked build, so it traps in every run. Never reached from data: a
+// read refusal latches, it never aborts (U7).
 // ---------------------------------------------------------------------------
 
 def serialize_abort(message:string):
@@ -20,7 +20,8 @@ def serialize_abort(message:string):
     set_exit_code(70)
     return from program
 
-// The body of every stub until its family card lands (DESIGN.md (f)).
+// The stub's body: it aborts with the family's name (DESIGN.md (f), the smoke
+// test).
 def serialize_stub(name:string):
     serialize_abort("serialize: " + name + " not implemented")
 
