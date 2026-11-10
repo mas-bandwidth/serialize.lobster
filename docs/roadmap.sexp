@@ -6,10 +6,7 @@
 ;
 ; A cell is ✅ only when every task under it is :done, and a :done task names its evidence (the
 ; land commit of the sprint card that built it, on the branch named). Every ❌ task names its
-; sprint card, the archive file that keeps the card's whole brief and record, and its last pushed
-; head. Rewritten 2026-10-20 at the pit stop, when every sprint stream that is not
-; rocketnet was archived: "Archive everything from the sprint that isn't rocketnet. Move the cards into their
-; respective roadmaps."
+; sprint card and its last pushed head. Rewritten 2026-10-20.
 (:schema 1 :root "serialize-lobster/roadmap"
  :page (:title "serialize.lobster roadmap"
         :roadmaps ("port")

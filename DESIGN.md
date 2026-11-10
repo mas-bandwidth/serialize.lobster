@@ -36,8 +36,8 @@ Nothing here edits them; a change arrives by re-vendoring from a new ref.
 **The pin.** Lobster v2026.8 is pinned through its release zip, with the sha256
 below. The tag `v2026.8` is the annotated tag object
 `0921f7dd57458e1373a054880b84ceb9b5d719a5`, which points at commit
-`acc66d71978ae5525be1356aa622fbaa9a57e848`. The brief's "commit 0921f7dd5745"
-is the tag object; the `--cpp` leg checks out the commit. The setup is
+`acc66d71978ae5525be1356aa622fbaa9a57e848`. `0921f7dd5745` is the tag object,
+not a commit; the `--cpp` leg checks out the commit. The setup is
 `make dist-lobster`, described in (g).
 
 ## (a) THE API
