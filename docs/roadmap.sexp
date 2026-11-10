@@ -7,8 +7,8 @@
 ; A cell is ✅ only when every task under it is :done, and a :done task names its evidence (the
 ; land commit of the sprint card that built it, on the branch named). Every ❌ task names its
 ; sprint card, the archive file that keeps the card's whole brief and record, and its last pushed
-; head. Rewritten 2026-10-20 at the pit stop, when Glenn archived every sprint stream that is not
-; rocketnet: "Archive everything from the sprint that isn't rocketnet. Move the cards into their
+; head. Rewritten 2026-10-20 at the pit stop, when every sprint stream that is not
+; rocketnet was archived: "Archive everything from the sprint that isn't rocketnet. Move the cards into their
 ; respective roadmaps."
 (:schema 1 :root "serialize-lobster/roadmap"
  :page (:title "serialize.lobster roadmap"
@@ -78,8 +78,8 @@
   (:id "serialize-lobster-fuzz-differential" :type :task :title "Differential fuzzing against serialize.c" :state :done :evidence ("land commit 2a26bfdb80ac on sprint/serialize-lobster (card serialize-lobster-fuzz-differential, stream serialize-lobster)"))
   (:id "port/fuzz" :type :work-set :children ("serialize-lobster-fuzz-differential"))
   (:id "serialize-lobster-bench" :type :task :title "Benchmark against serialize.c, C++ serialize and serialize.rs" :state :todo :evidence ()
-   :note "card serialize-lobster-bench (stream serialize-lobster, working when archived); last pushed head bea0405a5e68df20de65535238d45ae0162c4270 on sprint/serialize-lobster-bench.w1.g1.e21; brief kept in ~/rowan-working/sprint-archive-2026-10-20/serialize-lobster/serialize-lobster-bench.md")
+   :note "card serialize-lobster-bench (stream serialize-lobster, working when archived); last pushed head bea0405a5e68df20de65535238d45ae0162c4270 on sprint/serialize-lobster-bench.w1.g1.e21; brief archived")
   (:id "port/bench" :type :work-set :children ("serialize-lobster-bench"))
   (:id "serialize-lobster-bench-report" :type :task :title "Goose vs C++ vs Rust (and Lobster) benchmark report" :state :todo :evidence ()
-   :note "card serialize-lobster-bench-report (stream serialize-lobster, waiting when archived); no pushed head; brief kept in ~/rowan-working/sprint-archive-2026-10-20/serialize-lobster/serialize-lobster-bench-report.md")
+   :note "card serialize-lobster-bench-report (stream serialize-lobster, waiting when archived); no pushed head; brief archived")
   (:id "port/bench-report" :type :work-set :children ("serialize-lobster-bench-report"))))

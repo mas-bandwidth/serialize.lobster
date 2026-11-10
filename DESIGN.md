@@ -8,23 +8,24 @@ the contract.
 
 **The oracle.** serialize.c v2.0.0 (`e11585b0dfbf214ed37c442d5f8b6133fd8b10df`),
 format 2.0, is the reference. This port matches it byte for byte and refusal for refusal.
-serialize.luau (branch `sprint/serialize-luau`,
-`e9acef6fee5efbb1c7b33a25843dba9aa59f6b22`) is the closest worked port and
+serialize.luau
+(`e9acef6fee5efbb1c7b33a25843dba9aa59f6b22`) is the closest worked port and
 shaped this page. Both are read and never imported. STANDARD.md's
 Implementation Law says sibling ports are never sources, so where the Luau page
 and serialize.c disagree, serialize.c and STANDARD.md decide.
 
 **The vendored standard.** `STANDARD.md`, `IMPLEMENTING.md`, `conformance/`
 and `conformance-controls/` are copied
-VERBATIM from mas-bandwidth/serialize at tag v2.1.1
-(`bd3d67e23c8acc2c45eff69633dbe16c029a2cba`, the 2.1.1 rulings: one
+VERBATIM from mas-bandwidth/serialize at tag v2.1.3. They carry the 2.1.1
+rulings: one
 write-misuse mechanism, the trap (U9); a measure checks what a write checks
 (U6); `serialize_copy_string` backs off to a whole character and the exports
 ruling (U15). The corpus and STANDARD.md are unchanged since v2.1.0, and only
-IMPLEMENTING.md's text moved). Before it the pin was tag v2.1.0
+IMPLEMENTING.md's text moved. Before it the pins were tag v2.1.1
+(`bd3d67e23c8acc2c45eff69633dbe16c029a2cba`), tag v2.1.0
 (`884bc3098c9619d67308d9c6b5cdf38593d98b69`: format 2.0, standard 2.1, the
-`rejected` reason and the uniform rules U1 to U16), before that tag v2.0.1 (`b812b75cc0a75dd925af74103ab1f155b9431ac1`),
-and before that tag v2.0.0 (merge `8dae4cc08b7b46c9b5fcf08dad5e99ad1348b76b`).
+`rejected` reason and the uniform rules U1 to U16), tag v2.0.1 (`b812b75cc0a75dd925af74103ab1f155b9431ac1`),
+and tag v2.0.0 (merge `8dae4cc08b7b46c9b5fcf08dad5e99ad1348b76b`).
 `tools/revendor.sh <tag-or-commit>` copies them from a fetch of the ref and
 diffs each one, and the CI `corpus` job diffs all four against the ref
 (`SERIALIZE_REF`) on every run. The corpus holds 18 files: format 2.0 removed
@@ -57,6 +58,10 @@ stream:
         m.health = s.serialize_int(m.health, 0, 100)
         m.alive = s.serialize_bool(m.alive)
         return s.ok()
+
+A message serialized through a top-level function must be a `class`, not a
+`struct`: a Lobster `struct` is passed by value, so the writes land on a copy
+and are lost.
 
 That one definition compiles three ways. STANDARD.md, "Read-only and write-only
 forms", says the API surface is not constrained, and that one stream
@@ -101,7 +106,7 @@ measure's costs nothing, so the same message function serves all three:
 | Lobster | serialize.c | notes |
 |---|---|---|
 | `serialize_write_stream(buffer:string)` | `serialize_write_stream_init` | the capacity is `length(buffer)`, which must be a multiple of 8 (else abort) |
-| `serialize_read_stream(data:string, bytes:int)` | `serialize_read_stream_init` | in place; `length(data) >= bytes + 8`, the slack contract (else abort) |
+| `serialize_read_stream(data:string, bytes:int)` | `serialize_read_stream_init` | in place; `length(data) >= bytes + 8`, the slack contract (else refused at initialization as `value_out_of_range`) |
 | `serialize_read_stream_padded(data:string)` | `serialize_read_stream_init_padded` | copies `data` into a fresh string with 8 zero bytes of slack |
 | `serialize_measure_stream()` | `serialize_measure_stream_init` | |
 | `s.flush()` (write) | `serialize_write_flush` | call once, after the final write |
@@ -281,8 +286,7 @@ The rules for this library:
 
 ## (c) THE NUMBER MODEL
 
-Measured on hulk with the pinned release binary, 2026-10-19 (the brief's
-hetzner2 measurements agree):
+Measured on a 64-core Linux bench with the pinned release binary, 2026-10-19:
 
 - **One integer type.** Lobster's `int` is signed 64-bit, and every value of
   64 bits or fewer lives in it. That covers bits, uint8 to uint64, int, int64,
@@ -320,7 +324,7 @@ hetzner2 measurements agree):
 are produced, through a 16-byte scratch string the float family owns,
 allocated once and reused. Two rounding routes and two bit routes were timed
 over 10,000,000 calls each, under the JIT and under `--cpp` with clang -O2, on
-hulk on 2026-10-19 (the program is in "The timing" below). Run 1 drove the
+a 64-core Linux bench on 2026-10-19 (the program is in "The timing" below). Run 1 drove the
 binaries directly. Run 2 was `make bench`, at nice 19 with the bench's load
 average near 24 on 64 cores.
 
@@ -378,7 +382,8 @@ Decided:
   of `data`, which must be at least that long (else abort). On read it stores
   the bytes into `data` at offset 0 and returns the resulting string: `data`
   itself when it is writable in place, a fresh string otherwise, which the
-  caller must keep. `data` must already be at least `bytes` long (else abort).
+  caller must keep. `data` must already be at least `bytes` long (else the
+  read refuses `value_out_of_range`).
   After a refusal its contents are unspecified, as STANDARD.md allows. The
   aligned body moves through `pack_bytes` and `unpack_bytes` (bitpacker),
   using whole 64-bit words where the run allows.
@@ -429,8 +434,8 @@ reader's reasons only. Write misuse is:
   - `min > max` on any ranged operation (int, int64, int128, fixed)
   - an int32 parameter outside int32 (U5)
   - a bad Q format: `integer_bits < 1`, `fraction_bits < 0`, or
-    `integer_bits + fraction_bits` other than 32, 64 or 128 for the storage
-    (STANDARD.md fixed)
+    `integer_bits + fraction_bits` other than 8, 16, 32, 64 or 128 for the
+    storage (STANDARD.md fixed)
   - compressed_float with `min >= max` or `res <= 0`, or a non-finite delta or
     value count (serialize.c's asserts); and a declaration whose top integer
     decodes non-finite (`min + delta` rounded once to float32: STANDARD.md
@@ -554,6 +559,7 @@ port promises their behaviour:
   `serialize_compressed_float_params`, `string_utf8_valid` (the reference's
   `string_is_valid_utf8`), and `serialize_format_version` (STANDARD.md,
   Format version).
+- **`serialize_version`**: the vendored standard's release, `"2.1.3"`.
 - **Language necessities**, each one because Lobster lacks what the
   reference's types give C++: the 128-bit carriers `serialize_uint128` and
   `serialize_int128` with `serialize_uint128_make`, `serialize_int128_make`,
@@ -590,7 +596,7 @@ word).
 
 | file | holds | card |
 |---|---|---|
-| `src/serialize.lobster` | the entry: imports every file below, ends with a declaration (see below) | serialize-lobster-design (this card) |
+| `src/serialize.lobster` | the entry: imports every file below, ends with declarations (see below) | serialize-lobster-design (this card) |
 | `src/serialize_stream.lobster` | the three stream classes and their constructors; the latch (`failed`, `ok`, `error`, `fail`); `is_writing`, `is_reading`; accounting (`bits_processed`, `bytes_processed`, `bits_available`, `bits_remaining`, `align_bits`, `flush`); the gates `write_gate`, `read_gate`, `measure_bits`; bool, uint8, uint16, uint32 and uint64 on every stream; align on every stream; the number model helpers; `serialize_abort` and `serialize_stub`; `serialize_format_version` | serialize-lobster-design (this card), IMPLEMENTED |
 | `src/serialize_bitpacker.lobster` | `pack_bits`, `pack_bits64`, `flush_bits`, `pack_bytes`, `unpack_bits`, `unpack_bits64`, `unpack_bytes`; `serialize_bits` and `serialize_bits64` on every stream; `serialize_bits_required`, `serialize_bits_required64` | serialize-lobster-bitpacker |
 | `src/serialize_int.lobster` | `serialize_int`, `serialize_int64` and `serialize_int_relative` on every stream | serialize-lobster-integers |
@@ -601,13 +607,12 @@ word).
 | `src/serialize_bytes.lobster` | `serialize_bytes` and `serialize_string` on every stream | serialize-lobster-strings |
 | `src/serialize_object.lobster` | `serialize_object` on every stream | serialize-lobster-strings |
 
-Every signature in the family files is final and present now. Each body is a
-STUB, `serialize_stub("<name>")`, which aborts with
-`serialize: <name> not implemented`. A family card replaces the bodies of its
-own files and edits no other src/ file. Each card puts its tests in its own
-`test/<name>/` (one directory per card) and any make target in its own
-`make/<card>.mk`. Every function that implements a rule cites its STANDARD.md
-section, and this page's section where one applies.
+Every signature in the family files is final and every body is implemented.
+`serialize_stub("<name>")` remains, aborting with
+`serialize: <name> not implemented`, for the smoke test. Each card put its
+tests in its own `test/<name>/` (one directory per card) and any make target in
+its own `make/<card>.mk`. Every function that implements a rule cites its
+STANDARD.md section, and this page's section where one applies.
 
 **How an arm is written.** A family arm takes the stream as `s:<class>`, with
 a single colon. With `s::<class>`, the stream's fields come into scope, and a
@@ -645,17 +650,15 @@ depends on serialize-lobster-bitpacker.
 
 - An `import` on the LAST line of an imported file fails to compile, with
   ``illegal start of expression: `end of include` ``. The entry therefore ends
-  with a declaration, `serialize_reference_version`, and no family file may
-  end with an import.
+  with declarations, `serialize_version` and `serialize_reference_version`, and
+  no family file may end with an import.
 - A program that imports a test file type-checks every function that file
   defines.
 
 **The smoke test and the stub.** test/smoke's `TestStubAborts` proves the
-stub mechanism on `serialize_object`, through the runner, by its exit code and
-message. When serialize-lobster-strings implements `serialize_object`, that
-card retargets `TestStubAborts` to call `serialize_stub("serialize_object")`
-directly. That edit keeps the proof of the message format, and its PATHS must
-name test/smoke/smoke_test.lobster.
+stub mechanism, through the runner, by its exit code and message: it calls
+`serialize_stub("serialize_object")` directly, which keeps the proof of the
+message format.
 
 ## (g) THE RUNNER
 
@@ -708,7 +711,7 @@ name test/smoke/smoke_test.lobster.
   `LOBSTER_ENGINE=OFF`. The release binary's `--cpp` output carries the
   engine's builtin library, and an engine-less `compiled_lobster` refuses it
   with "code compiled with mismatching builtin function library" (measured).
-  `make lobster-cpp` builds both trees once, in about two minutes on hulk.
+  `make lobster-cpp` builds both trees once, in about two minutes on a 64-core Linux bench.
   clang's linker `lld` is found beside clang (`/usr/lib/llvm-18/bin` on Ubuntu
   24.04), as the CMake build's `-fuse-ld=lld` needs.
 - **Unit tests** use no real time, no sockets, no network and no outside

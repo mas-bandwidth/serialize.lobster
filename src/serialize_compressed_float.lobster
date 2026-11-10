@@ -28,7 +28,7 @@ def serialize_compressed_float_abort_top():
 // decode of max_integer_value (min + delta, rounded once) finite in float32").
 // Asserted on write only; a reader refuses the non-finite decode instead.
 def serialize_compressed_float_check_top(delta:float, min:float):
-    let top = serialize_float32_round(serialize_float32_round(min) + delta)
+    let top = serialize_float32_round(serialize_float32_round(min) + serialize_float32_round(delta))
     if not serialize_compressed_float_is_finite(top):
         serialize_compressed_float_abort_top()
 
@@ -81,7 +81,8 @@ def serialize_compressed_float_params(min:float, max:float, res:float):
 // bits_required, which works in the uint32 domain, cannot mask it), bits is
 // bits_required(0, max_integer_value), and delta is positive and finite.
 def serialize_compressed_float_precomputed_ok(max_integer_value:int, bits:int, delta:float) -> bool:
-    return max_integer_value >= 1 and max_integer_value <= 4294967040 and bits == serialize_bits_required(0, max_integer_value) and delta > 0.0 and serialize_compressed_float_is_finite(delta)
+    let fdelta = serialize_float32_round(delta)
+    return max_integer_value >= 1 and max_integer_value <= 4294967040 and bits == serialize_bits_required(0, max_integer_value) and fdelta > 0.0 and serialize_compressed_float_is_finite(fdelta)
 
 // The write and measure check (DESIGN.md (e); serialize.c's asserts in the
 // precomputed entry points): bad constants abort.
@@ -95,8 +96,9 @@ def serialize_compressed_float_validate_precomputed(max_integer_value:int, bits:
 // integer to max_integer_value. The whole width is gated before any bit moves.
 def serialize_compressed_float_write_precomputed(s:serialize_write_stream, value:float, max_integer_value:int, bits:int, delta:float, min:float):
     let fmin = serialize_float32_round(min)
+    let fdelta = serialize_float32_round(delta)
     let fvalue = serialize_float32_round(value)
-    var normalized = serialize_float32_round(serialize_float32_round(fvalue - fmin) / delta)
+    var normalized = serialize_float32_round(serialize_float32_round(fvalue - fmin) / fdelta)
     if not (normalized >= 0.0):
         normalized = 0.0
     elif not (normalized <= 1.0):
@@ -115,6 +117,7 @@ def serialize_compressed_float_write_precomputed(s:serialize_write_stream, value
 // max_integer_value, then divide, multiply and add, every step float32.
 def serialize_compressed_float_read_precomputed(s:serialize_read_stream, value:float, max_integer_value:int, bits:int, delta:float, min:float):
     let fmin = serialize_float32_round(min)
+    let fdelta = serialize_float32_round(delta)
     if s.failed:
         return value, false
     if not s.read_gate(bits):
@@ -123,7 +126,7 @@ def serialize_compressed_float_read_precomputed(s:serialize_read_stream, value:f
     if integer_value > max_integer_value:
         return value, s.fail(serialize_refusal_value_out_of_range)
     let normalized = serialize_float32_round(serialize_float32_round(float(integer_value)) / serialize_float32_round(float(max_integer_value)))
-    let scaled = serialize_float32_round(normalized * delta)
+    let scaled = serialize_float32_round(normalized * fdelta)
     let decoded = serialize_float32_round(scaled + fmin)
     // The decode must be finite: every operand is finite and the integer is in
     // range, and still the final add can round past FLT_MAX. A non-finite

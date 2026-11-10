@@ -427,7 +427,7 @@ def TestSerializeStringsNulBeforeUtf8WriteTraps():
     w.serialize_string("\xFF\x00", 16)
 
 // A string read holds the claimed length against the bytes that remain BEFORE
-// it allocates the payload (PORT-BRIEF 2026-10-22, allocate-before-check): a
+// it allocates the payload: a
 // 4-byte stream under a buffer_size of 2^31 that claims 2^31 - 1 bytes is
 // refused as past_end with its destination untouched, and nothing of the
 // claimed size is allocated. The same holds for a stream whose padding is set:
@@ -443,6 +443,14 @@ def strings_claimed_length_before_allocation():
     v, ok = p.serialize_string(v, buffer_size)
     strings_check(not ok and v == "SENTINEL" and p.refusal_name() == "nonzero_padding", "huge claimed length after set padding: refused as " + p.refusal_name())
     print "test/strings: a claimed length past the stream is refused before any allocation"
+
+// A length outside the string is not a prefix of well-formed text: the helper
+// refuses it without reading past the end.
+def TestSerializeStringsUtf8ValidBounds():
+    strings_check(not string_utf8_valid("abc", 4), "utf8 valid: length past the string")
+    strings_check(not string_utf8_valid("abc", -1), "utf8 valid: negative length")
+    strings_check(string_utf8_valid("abc", 3), "utf8 valid: the whole string")
+    print "test/strings: string_utf8_valid refuses a length outside the string"
 
 def TestSerializeStrings():
     strings_run_file("bytes")
