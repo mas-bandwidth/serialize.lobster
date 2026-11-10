@@ -29,6 +29,8 @@ class serialize_float_record:
     value_text:string
     consumed:int
     writer:bool
+    writer_input:bool
+    writer_bits:int
     steps:[string]
     values:[string]
 
@@ -46,7 +48,7 @@ def serialize_float_test_new_record(op:string) -> serialize_float_record:
     return serialize_float_record {
         op: op, name: "", param_names: [], param_values: [], bytes: [],
         refused: false, reason: "", expect_bits: false, bits: 0, expect_value: false,
-        value_text: "", consumed: -1, writer: false, steps: [], values: []
+        value_text: "", consumed: -1, writer: false, writer_input: false, writer_bits: 0, steps: [], values: []
     }
 
 def serialize_float_test_hex(text:string) -> int:
@@ -156,6 +158,9 @@ def serialize_float_test_parse(text:string) -> [serialize_float_record]:
                         current.values.push(v)
             elif words[0] == "consumed" and length(words) >= 2:
                 current.consumed = string_to_int(words[1])
+            elif words[0] == "writer_input" and length(words) >= 4 and words[1] == "bits":
+                current.writer_input = true
+                current.writer_bits = serialize_float_test_hex(words[3])
             elif words[0] == "writer" and length(words) >= 2 and words[1] == "canonical":
                 current.writer = true
     if has_current:
@@ -365,6 +370,23 @@ def serialize_float_test_run_compressed(record:serialize_float_record, label:str
     serialize_float_test_check(ok, label + ": accepted read refused")
     serialize_float_test_check(s.bits_processed() == record.consumed, label + ": consumed bits")
     serialize_float_test_check(serialize_float32_bits(value) == record.bits, label + ": bit pattern")
+    if record.writer or record.writer_input:
+        let w = serialize_float_test_write(record.consumed)
+        let input = if record.writer_input: serialize_float32_from_bits(record.writer_bits) else: value
+        var ignored = input
+        var write_ok = true
+        ignored, write_ok = w.serialize_compressed_float(input, min, max, res)
+        w.flush()
+        serialize_float_test_check(write_ok, label + ": canonical write refused")
+        serialize_float_test_check(w.bits_processed() == record.consumed, label + ": writer consumed bits")
+        serialize_float_test_same_bytes(record.bytes, w.buffer, w.bytes_processed(), label)
+        let roundtrip = serialize_read_stream(ensure_size(w.buffer, w.bytes_processed() + 8, 0), w.bytes_processed())
+        var decoded = 123.5
+        var read_ok = true
+        decoded, read_ok = roundtrip.serialize_compressed_float(decoded, min, max, res)
+        serialize_float_test_check(read_ok, label + ": round-trip read refused")
+        serialize_float_test_check(roundtrip.bits_processed() == record.consumed, label + ": round-trip consumed bits")
+        serialize_float_test_check(serialize_float32_bits(decoded) == record.bits, label + ": round-trip bit pattern")
 
 def serialize_float_test_run_record(record:serialize_float_record, file:string, index:int):
     let label = file + " " + string(index) + " " + record.name
