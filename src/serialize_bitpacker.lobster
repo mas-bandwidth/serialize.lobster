@@ -204,11 +204,11 @@ def serialize_bit_length64(v:int) -> int:
         n += 1
     return n
 
-// Bits required for [min, max] in the uint32 domain (STANDARD.md, int;
-// serialize.c serialize_bits_required; DESIGN.md (a), (c)).
+// Bits required for [min, max], the span taken at the full int width, the same
+// rule as serialize_bits_required64 (STANDARD.md, int, int64; serialize.c
+// serialize_bits_required64; DESIGN.md (a), (c)).
 def serialize_bits_required(min:int, max:int) -> int:
-    let span = (max - min) & 0xFFFFFFFF
-    return serialize_bit_length64(span)
+    return serialize_bits_required64(min, max)
 
 // Bits required for [min, max] over u64 patterns (STANDARD.md, int64;
 // serialize.c serialize_bits_required64; DESIGN.md (a), (c)).
