@@ -581,6 +581,7 @@ def TestSerializeFloat():
     serialize_float_test_finite_classes()
     serialize_float_test_compressed_finite_decode()
     serialize_float_test_compressed_bounds()
+    serialize_float_test_compressed_decode_operands()
 
 // ---------------------------------------------------------------------------
 // API misuse aborts (DESIGN.md (e), ABORT CASES): min >= max and res <= 0 on
@@ -649,3 +650,29 @@ def TestSerializeFloatSignalingNaNWriteTraps():
 def TestSerializeDoubleNegativeInfinityWriteTraps():
     let w = serialize_write_stream(ensure_size("", 8, 0))
     w.serialize_double(serialize_float64_from_bits(0xFFF0000000000000))
+
+// compressed_float's decode rounds both operands to float32 before the
+// division, matching the reference float32 division.
+def serialize_float_test_compressed_decode_operands():
+    let mins = [0.0, 0.0, 0.0, 0.0, -1000.0]
+    let maxs = [100000000.0, 100000000.0, 50331648.0, 1.0, 1000.0]
+    let ress = [1.0, 1.0, 1.0, 0.00000001, 0.00001]
+    let integers = [16777217, 16777219, 16777223, 16777217, 16777267]
+    let expected_bits = [0x4B800000, 0x4B800002, 0x4B800004, 0x3E2BCC77, 0xC4500E8C]
+    for(length(integers)) i:
+        let min = mins[i]
+        let max = maxs[i]
+        let res = ress[i]
+        let integer_value = integers[i]
+        let want = expected_bits[i]
+        let _max_integer_value, bits, _delta = serialize_compressed_float_params(min, max, res)
+        let buf = ensure_size("", 16, 0)
+        let w = serialize_write_stream(buf)
+        w.pack_bits(integer_value, bits)
+        w.flush()
+        let r = serialize_read_stream(buf, w.bytes_processed())
+        var decoded = 0.0
+        var ok = true
+        decoded, ok = r.serialize_compressed_float(decoded, min, max, res)
+        serialize_float_test_check(ok, "compressed decode operands: read refused for integer " + string(integer_value))
+        serialize_float_test_check(serialize_float32_bits(decoded) == want, "compressed decode operands: integer " + string(integer_value) + " decodes to " + string(serialize_float32_bits(decoded)) + ", expected " + string(want))
